@@ -98,12 +98,14 @@ for size in "${SIZE_ARRAY[@]}"; do
         echo "Running: ${benchmark}"
 
         for iteration in $(seq 1 "${ITERATIONS}"); do
-            duration_ms=$(run_benchmark "${benchmark}" "${size}" "${iteration}")
+            result=$(run_benchmark "${benchmark}" "${size}" "${iteration}")
+            duration_ms=$(echo "${result}" | cut -d',' -f1)
+            rows_affected=$(echo "${result}" | cut -d',' -f2)
 
             if [[ "${duration_ms}" == "-1" ]]; then
                 echo "  [${iteration}/${ITERATIONS}] ERROR"
             else
-                print_progress "${benchmark}" "${size}" "${iteration}" "${ITERATIONS}" "${duration_ms}"
+                print_progress "${benchmark}" "${size}" "${iteration}" "${ITERATIONS}" "${duration_ms}" "${rows_affected}"
             fi
         done
     done

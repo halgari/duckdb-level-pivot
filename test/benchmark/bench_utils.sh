@@ -144,7 +144,7 @@ run_benchmark() {
     record_result "${benchmark}" "${size}" "${iteration}" "${duration_ms}" "${rows_affected}"
 
     # Return result for display
-    echo "${duration_ms}"
+    echo "${duration_ms},${rows_affected}"
 }
 
 # Generate summary statistics from CSV
@@ -199,6 +199,15 @@ print_progress() {
     local total_iterations="$4"
     local duration_ms="$5"
 
-    printf "  [%d/%d] %s @ %d rows: %.1f ms\n" \
-        "${iteration}" "${total_iterations}" "${benchmark}" "${size}" "${duration_ms}"
+    local rows_affected="${6:-0}"
+
+    local keys_per_sec_str=""
+    if [[ "${rows_affected}" -gt 0 && "${duration_ms}" != "0" ]]; then
+        local kps
+        kps=$(awk "BEGIN {printf \"%.0f\", ${rows_affected} * 1000 / ${duration_ms}}")
+        keys_per_sec_str="  (${kps} keys/sec)"
+    fi
+
+    printf "  [%d/%d] %s @ %d rows: %.1f ms%s\n" \
+        "${iteration}" "${total_iterations}" "${benchmark}" "${size}" "${duration_ms}" "${keys_per_sec_str}"
 }
