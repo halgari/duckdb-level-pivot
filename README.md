@@ -2,6 +2,22 @@
 
 A DuckDB storage extension that wraps [LevelDB](https://github.com/google/leveldb) with **pivot semantics** — structured, multi-column relational tables stored as key-value pairs in LevelDB.
 
+## Installation
+
+```sql
+SET allow_unsigned_extensions = true;
+INSTALL level_pivot FROM 'https://halgari.github.io/duckdb-level-pivot/current_release';
+LOAD level_pivot;
+```
+
+Requires DuckDB v1.4.4. The extension is not yet in the DuckDB community registry, so `allow_unsigned_extensions` is required.
+
+To update to a newer version:
+
+```sql
+FORCE INSTALL level_pivot FROM 'https://halgari.github.io/duckdb-level-pivot/current_release';
+```
+
 ## How It Works
 
 LevelPivot maps relational rows to LevelDB keys using a **key pattern**. Each attribute value in a row becomes a separate LevelDB entry, and SELECTs reassemble rows by grouping keys that share the same identity prefix.

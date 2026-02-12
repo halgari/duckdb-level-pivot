@@ -1,0 +1,97 @@
+name: Deploy Extension to GitHub Pages
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get DuckDB version from CI workflow
+        id: duckdb_version
+        run: |
+          version=$(grep 'duckdb_version:' .github/workflows/MainDistributionPipeline.yml | head -1 | sed 's/.*: //')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "DuckDB version: $version"
+
+      - name: Find latest successful CI run on main
+        id: find_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          run_id=$(gh run list \
+            --branch main \
+            --workflow "Main Extension Distribution Pipeline" \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId')
+
+          if [ -z "$run_id" ]; then
+            echo "::error::No successful CI run found on main"
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "Using CI run: $run_id"
+
+      - name: Download build artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ steps.find_run.outputs.run_id }}
+        run: |
+          mkdir -p artifacts
+          cd artifacts
+          gh run download "$RUN_ID" --pattern 'level_pivot-*-extension-*'
+          echo "Downloaded artifacts:"
+          ls -la
+
+      - name: Organize extension files
+        env:
+          DUCKDB_VERSION: ${{ steps.duckdb_version.outputs.version }}
+        run: |
+          mkdir -p deploy
+
+          for artifact_dir in artifacts/level_pivot-*-extension-*; do
+            # Extract platform from directory name (e.g., level_pivot-v1.4.4-extension-linux_amd64 → linux_amd64)
+            platform=$(echo "$artifact_dir" | sed 's/.*-extension-//')
+            echo "Processing platform: $platform"
+
+            # Skip WASM platforms
+            if [[ "$platform" == wasm_* ]]; then
+              echo "  Skipping WASM platform: $platform"
+              continue
+            fi
+
+            dest="deploy/${DUCKDB_VERSION}/${platform}"
+            mkdir -p "$dest"
+
+            # Find the extension file and gzip it
+            ext_file=$(find "$artifact_dir" -name '*.duckdb_extension' | head -1)
+            if [ -n "$ext_file" ]; then
+              gzip -c "$ext_file" > "${dest}/level_pivot.duckdb_extension.gz"
+              echo "  Created ${dest}/level_pivot.duckdb_extension.gz"
+            else
+              echo "  WARNING: No .duckdb_extension file found in $artifact_dir"
+            fi
+          done
+
+          echo ""
+          echo "Final directory structure:"
+          find deploy -type f | sort
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./deploy
+          destination_dir: current_release
+          keep_files: true
