@@ -24,8 +24,8 @@ struct ConnectionOptions {
 	std::string db_path;
 	bool read_only = true;
 	bool create_if_missing = false;
-	size_t block_cache_size = 8 * 1024 * 1024;
-	size_t write_buffer_size = 4 * 1024 * 1024;
+	size_t block_cache_size = static_cast<size_t>(8) * 1024 * 1024;
+	size_t write_buffer_size = static_cast<size_t>(4) * 1024 * 1024;
 };
 
 class LevelDBIterator {

@@ -94,7 +94,7 @@ SourceResultType LevelPivotInsert::GetData(ExecutionContext &context, DataChunk 
                                            OperatorSourceInput &input) const {
 	auto &gstate = sink_state->Cast<LevelPivotInsertGlobalState>();
 	chunk.SetCardinality(1);
-	chunk.SetValue(0, 0, Value::BIGINT(gstate.insert_count));
+	chunk.SetValue(0, 0, Value::BIGINT(static_cast<int64_t>(gstate.insert_count)));
 	return SourceResultType::FINISHED;
 }
 

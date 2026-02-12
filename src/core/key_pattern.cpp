@@ -20,7 +20,7 @@ void KeyPattern::parse(const std::string &pattern) {
 	while (pos < pattern.size()) {
 		if (pattern[pos] == '{') {
 			if (!current_literal.empty()) {
-				segments_.push_back(LiteralSegment {current_literal});
+				segments_.emplace_back(LiteralSegment {current_literal});
 				current_literal.clear();
 			}
 
@@ -46,14 +46,14 @@ void KeyPattern::parse(const std::string &pattern) {
 				if (has_attr_) {
 					throw KeyPatternError("Multiple {attr} segments in pattern");
 				}
-				segments_.push_back(AttrSegment {});
+				segments_.emplace_back(AttrSegment {});
 				has_attr_ = true;
 				attr_index_ = static_cast<int>(segments_.size()) - 1;
 			} else {
 				if (std::find(capture_names_.begin(), capture_names_.end(), name) != capture_names_.end()) {
 					throw KeyPatternError("Duplicate capture name '" + name + "' in pattern");
 				}
-				segments_.push_back(CaptureSegment {name});
+				segments_.emplace_back(CaptureSegment {name});
 				capture_names_.push_back(name);
 			}
 
@@ -65,7 +65,7 @@ void KeyPattern::parse(const std::string &pattern) {
 	}
 
 	if (!current_literal.empty()) {
-		segments_.push_back(LiteralSegment {current_literal});
+		segments_.emplace_back(LiteralSegment {current_literal});
 	}
 }
 

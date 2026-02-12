@@ -102,7 +102,7 @@ SourceResultType LevelPivotDelete::GetData(ExecutionContext &context, DataChunk 
                                            OperatorSourceInput &input) const {
 	auto &gstate = sink_state->Cast<LevelPivotDeleteGlobalState>();
 	chunk.SetCardinality(1);
-	chunk.SetValue(0, 0, Value::BIGINT(gstate.delete_count));
+	chunk.SetValue(0, 0, Value::BIGINT(static_cast<int64_t>(gstate.delete_count)));
 	return SourceResultType::FINISHED;
 }
 

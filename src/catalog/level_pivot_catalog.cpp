@@ -37,7 +37,7 @@ optional_ptr<CatalogEntry> LevelPivotCatalog::CreateSchema(CatalogTransaction tr
 optional_ptr<SchemaCatalogEntry> LevelPivotCatalog::LookupSchema(CatalogTransaction transaction,
                                                                  const EntryLookupInfo &schema_lookup,
                                                                  OnEntryNotFound if_not_found) {
-	auto schema_name = schema_lookup.GetEntryName();
+	const auto &schema_name = schema_lookup.GetEntryName();
 	if (schema_name == DEFAULT_SCHEMA || schema_name == "level_pivot") {
 		return main_schema_.get();
 	}
