@@ -1,16 +1,9 @@
 #include "level_pivot_delete.hpp"
-#include "level_pivot_table_entry.hpp"
-#include "level_pivot_catalog.hpp"
-#include "level_pivot_transaction.hpp"
+#include "level_pivot_sink_helpers.hpp"
 #include "level_pivot_utils.hpp"
 #include "key_parser.hpp"
-#include "level_pivot_storage.hpp"
 
 namespace duckdb {
-
-struct LevelPivotDeleteGlobalState : public GlobalSinkState {
-	idx_t delete_count = 0;
-};
 
 LevelPivotDelete::LevelPivotDelete(PhysicalPlan &plan, vector<LogicalType> types, TableCatalogEntry &table,
                                    idx_t estimated_cardinality)
@@ -18,21 +11,17 @@ LevelPivotDelete::LevelPivotDelete(PhysicalPlan &plan, vector<LogicalType> types
 }
 
 unique_ptr<GlobalSinkState> LevelPivotDelete::GetGlobalSinkState(ClientContext &context) const {
-	return make_uniq<LevelPivotDeleteGlobalState>();
+	return make_uniq<LevelPivotSinkGlobalState>();
 }
 
 SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
-	auto &gstate = input.global_state.Cast<LevelPivotDeleteGlobalState>();
-	auto &lp_table = table.Cast<LevelPivotTableEntry>();
-	auto &connection = *lp_table.GetConnection();
-	auto &catalog = lp_table.ParentCatalog().Cast<LevelPivotCatalog>();
-	auto &txn = Transaction::Get(context.client, catalog).Cast<LevelPivotTransaction>();
-	auto &schema = catalog.GetMainSchema();
+	auto &gstate = input.global_state.Cast<LevelPivotSinkGlobalState>();
+	auto ctx = GetSinkContext(context, table);
 
-	if (lp_table.GetTableMode() == LevelPivotTableMode::PIVOT) {
-		auto &parser = lp_table.GetKeyParser();
-		auto batch = connection.create_batch();
-		auto iter = connection.iterator();
+	if (ctx.table.GetTableMode() == LevelPivotTableMode::PIVOT) {
+		auto &parser = ctx.table.GetKeyParser();
+		auto batch = ctx.connection.create_batch();
+		auto iter = ctx.connection.iterator();
 
 		std::vector<std::string> identity_values;
 		identity_values.reserve(chunk.ColumnCount());
@@ -56,28 +45,28 @@ SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chun
 				}
 
 				auto parsed = parser.parse_view(key_sv);
-				if (parsed && IdentityMatches(identity_values, parsed->capture_values)) {
+				if (parsed && IdentityMatches(identity_values, parsed->capture_values.data(), parsed->capture_values.size())) {
 					batch.del(key_sv);
-					txn.CheckKeyAgainstTables(key_sv, schema);
+					ctx.txn.CheckKeyAgainstTables(key_sv, ctx.schema);
 				}
 				iter.next();
 			}
 		}
 
 		batch.commit();
-		gstate.delete_count += chunk.size();
+		gstate.row_count += chunk.size();
 	} else {
-		auto batch = connection.create_batch();
+		auto batch = ctx.connection.create_batch();
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			auto key_val = chunk.data[0].GetValue(row);
 			if (!key_val.IsNull()) {
 				auto key = key_val.ToString();
 				batch.del(key);
-				txn.CheckKeyAgainstTables(key, schema);
+				ctx.txn.CheckKeyAgainstTables(key, ctx.schema);
 			}
 		}
 		batch.commit();
-		gstate.delete_count += chunk.size();
+		gstate.row_count += chunk.size();
 	}
 
 	return SinkResultType::NEED_MORE_INPUT;
@@ -90,10 +79,7 @@ SinkFinalizeType LevelPivotDelete::Finalize(Pipeline &pipeline, Event &event, Cl
 
 SourceResultType LevelPivotDelete::GetData(ExecutionContext &context, DataChunk &chunk,
                                            OperatorSourceInput &input) const {
-	auto &gstate = sink_state->Cast<LevelPivotDeleteGlobalState>();
-	chunk.SetCardinality(1);
-	chunk.SetValue(0, 0, Value::BIGINT(static_cast<int64_t>(gstate.delete_count)));
-	return SourceResultType::FINISHED;
+	return EmitRowCount(*sink_state, chunk);
 }
 
 } // namespace duckdb

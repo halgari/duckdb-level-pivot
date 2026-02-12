@@ -1,4 +1,5 @@
 #include "key_pattern.hpp"
+#include "simd_parser.hpp"
 #include <algorithm>
 
 namespace level_pivot {
@@ -94,6 +95,11 @@ void KeyPattern::validate() const {
 		if (!std::holds_alternative<LiteralSegment>(next)) {
 			throw KeyPatternError("{attr} must be followed by a literal delimiter or end of pattern");
 		}
+	}
+
+	if (capture_names_.size() > MAX_KEY_CAPTURES) {
+		throw KeyPatternError("Pattern has " + std::to_string(capture_names_.size()) +
+		                      " captures, max is " + std::to_string(MAX_KEY_CAPTURES));
 	}
 
 	for (size_t i = 0; i + 1 < segments_.size(); ++i) {

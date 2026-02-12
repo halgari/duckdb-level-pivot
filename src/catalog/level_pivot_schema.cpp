@@ -102,12 +102,7 @@ void LevelPivotSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &inf
 
 void LevelPivotSchemaEntry::Scan(ClientContext &context, CatalogType type,
                                  const std::function<void(CatalogEntry &)> &callback) {
-	if (type != CatalogType::TABLE_ENTRY) {
-		return;
-	}
-	for (auto &kv : tables_) {
-		callback(*kv.second);
-	}
+	Scan(type, callback);
 }
 
 void LevelPivotSchemaEntry::Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) {

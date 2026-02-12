@@ -1,15 +1,8 @@
 #include "level_pivot_insert.hpp"
-#include "level_pivot_table_entry.hpp"
-#include "level_pivot_catalog.hpp"
-#include "level_pivot_transaction.hpp"
+#include "level_pivot_sink_helpers.hpp"
 #include "key_parser.hpp"
-#include "level_pivot_storage.hpp"
 
 namespace duckdb {
-
-struct LevelPivotInsertGlobalState : public GlobalSinkState {
-	idx_t insert_count = 0;
-};
 
 LevelPivotInsert::LevelPivotInsert(PhysicalPlan &plan, vector<LogicalType> types, TableCatalogEntry &table,
                                    idx_t estimated_cardinality)
@@ -17,24 +10,18 @@ LevelPivotInsert::LevelPivotInsert(PhysicalPlan &plan, vector<LogicalType> types
 }
 
 unique_ptr<GlobalSinkState> LevelPivotInsert::GetGlobalSinkState(ClientContext &context) const {
-	return make_uniq<LevelPivotInsertGlobalState>();
+	return make_uniq<LevelPivotSinkGlobalState>();
 }
 
 SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
-	auto &gstate = input.global_state.Cast<LevelPivotInsertGlobalState>();
-	auto &lp_table = table.Cast<LevelPivotTableEntry>();
-	auto &connection = *lp_table.GetConnection();
-	auto &catalog = lp_table.ParentCatalog().Cast<LevelPivotCatalog>();
-	auto &txn = Transaction::Get(context.client, catalog).Cast<LevelPivotTransaction>();
-	auto &schema = catalog.GetMainSchema();
+	auto &gstate = input.global_state.Cast<LevelPivotSinkGlobalState>();
+	auto ctx = GetSinkContext(context, table);
 
-	if (lp_table.GetTableMode() == LevelPivotTableMode::PIVOT) {
-		auto &parser = lp_table.GetKeyParser();
-		auto &identity_cols = lp_table.GetIdentityColumns();
-		auto &attr_cols = lp_table.GetAttrColumns();
-		auto &columns = lp_table.GetColumns();
+	if (ctx.table.GetTableMode() == LevelPivotTableMode::PIVOT) {
+		auto &parser = ctx.table.GetKeyParser();
+		auto &attr_cols = ctx.table.GetAttrColumns();
 
-		auto batch = connection.create_batch();
+		auto batch = ctx.connection.create_batch();
 		auto &capture_names = parser.pattern().capture_names();
 
 		std::vector<std::string> identity_values;
@@ -44,7 +31,7 @@ SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chun
 			// Extract identity values in capture order
 			identity_values.clear();
 			for (auto &cap_name : capture_names) {
-				auto col_idx = lp_table.GetColumnIndex(cap_name);
+				auto col_idx = ctx.table.GetColumnIndex(cap_name);
 				auto val = chunk.data[col_idx].GetValue(row);
 				if (val.IsNull()) {
 					throw InvalidInputException("Cannot insert NULL into identity column '%s'", cap_name);
@@ -54,21 +41,21 @@ SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chun
 
 			// Write a key for each non-null attr column
 			for (auto &attr_name : attr_cols) {
-				auto col_idx = lp_table.GetColumnIndex(attr_name);
+				auto col_idx = ctx.table.GetColumnIndex(attr_name);
 				auto val = chunk.data[col_idx].GetValue(row);
 				if (!val.IsNull()) {
 					std::string key = parser.build(identity_values, attr_name);
 					batch.put(key, val.ToString());
-					txn.CheckKeyAgainstTables(key, schema);
+					ctx.txn.CheckKeyAgainstTables(key, ctx.schema);
 				}
 			}
 		}
 
 		batch.commit();
-		gstate.insert_count += chunk.size();
+		gstate.row_count += chunk.size();
 	} else {
 		// Raw mode: column 0 = key, column 1 = value
-		auto batch = connection.create_batch();
+		auto batch = ctx.connection.create_batch();
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			auto key_val = chunk.data[0].GetValue(row);
 			auto val_val = chunk.data[1].GetValue(row);
@@ -77,10 +64,10 @@ SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chun
 			}
 			std::string key = key_val.ToString();
 			batch.put(key, val_val.IsNull() ? "" : val_val.ToString());
-			txn.CheckKeyAgainstTables(key, schema);
+			ctx.txn.CheckKeyAgainstTables(key, ctx.schema);
 		}
 		batch.commit();
-		gstate.insert_count += chunk.size();
+		gstate.row_count += chunk.size();
 	}
 
 	return SinkResultType::NEED_MORE_INPUT;
@@ -93,10 +80,7 @@ SinkFinalizeType LevelPivotInsert::Finalize(Pipeline &pipeline, Event &event, Cl
 
 SourceResultType LevelPivotInsert::GetData(ExecutionContext &context, DataChunk &chunk,
                                            OperatorSourceInput &input) const {
-	auto &gstate = sink_state->Cast<LevelPivotInsertGlobalState>();
-	chunk.SetCardinality(1);
-	chunk.SetValue(0, 0, Value::BIGINT(static_cast<int64_t>(gstate.insert_count)));
-	return SourceResultType::FINISHED;
+	return EmitRowCount(*sink_state, chunk);
 }
 
 } // namespace duckdb

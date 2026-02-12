@@ -35,7 +35,7 @@ struct LevelPivotScanLocalState : public LocalTableFunctionState {
 	bool initialized = false;
 
 	// Zero-alloc parse buffers (reused every key)
-	std::string_view captures_buf[16];
+	std::string_view captures_buf[level_pivot::MAX_KEY_CAPTURES];
 	std::string_view attr_sv;
 
 	// Reusable identity buffer (assign() reuses string capacity after first row)
@@ -50,8 +50,6 @@ struct LevelPivotScanLocalState : public LocalTableFunctionState {
 	// Per-row NULL tracking (one flag per attr column)
 	std::vector<bool> attr_written;
 
-	// Raw mode state
-	bool raw_done = false;
 };
 
 static unique_ptr<FunctionData> LevelPivotBind(ClientContext &context, TableFunctionBindInput &input,
@@ -174,20 +172,6 @@ static inline void WriteValueDirect(Vector &vec, idx_t row, std::string_view sv,
 	}
 }
 
-// Compare captures_buf against current_identity. Returns true if they match.
-static inline bool IdentityMatchesFast(const std::vector<std::string> &identity,
-                                       const std::string_view *captures, size_t count) {
-	if (identity.size() != count) {
-		return false;
-	}
-	for (size_t i = 0; i < count; ++i) {
-		if (identity[i] != captures[i]) {
-			return false;
-		}
-	}
-	return true;
-}
-
 // Update identity from captures, reusing string buffer capacity
 static inline void UpdateIdentity(std::vector<std::string> &identity,
                                   const std::string_view *captures, size_t count) {
@@ -292,7 +276,7 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 			for (auto &im : lstate.identity_mappings) {
 				WriteValueDirect(output.data[im.output_col], count, lstate.captures_buf[im.capture_index], im.type);
 			}
-		} else if (!IdentityMatchesFast(lstate.current_identity, lstate.captures_buf, num_captures)) {
+		} else if (!IdentityMatches(lstate.current_identity, lstate.captures_buf, num_captures)) {
 			// Identity changed - finalize previous row
 			for (size_t a = 0; a < num_attrs; ++a) {
 				if (!lstate.attr_written[a]) {

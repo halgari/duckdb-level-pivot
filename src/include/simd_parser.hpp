@@ -16,6 +16,8 @@
 
 namespace level_pivot {
 
+static constexpr size_t MAX_KEY_CAPTURES = 16;
+
 // =============================================================================
 // CPU Feature Detection (runs once, cached)
 // =============================================================================
@@ -273,7 +275,7 @@ public:
         }
 
         size_t search_start = prefix_.size();
-        size_t delim_stack[17];
+        size_t delim_stack[MAX_KEY_CAPTURES + 1];
         size_t delim_count = 0;
 
         find_delimiters_(

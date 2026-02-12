@@ -25,24 +25,10 @@ void KeyParser::compute_estimated_key_size() {
 	}
 }
 
-bool KeyParser::matches(std::string_view key) const {
-	return parse(key).has_value();
-}
-
 namespace {
 
 template <typename ResultType>
 struct ParsePolicy;
-
-template <>
-struct ParsePolicy<ParsedKey> {
-	static void add_capture(ParsedKey &result, std::string_view key, size_t pos, size_t len) {
-		result.capture_values.emplace_back(key.substr(pos, len));
-	}
-	static void set_attr(ParsedKey &result, std::string_view key, size_t pos, size_t len) {
-		result.attr_name = std::string(key.substr(pos, len));
-	}
-};
 
 template <>
 struct ParsePolicy<ParsedKeyView> {
@@ -121,13 +107,9 @@ std::optional<ResultType> parse_impl(const KeyPattern &pattern, std::string_view
 
 } // anonymous namespace
 
-std::optional<ParsedKey> KeyParser::parse(std::string_view key) const {
-	return parse_impl<ParsedKey>(pattern_, key);
-}
-
 std::optional<ParsedKeyView> KeyParser::parse_view(std::string_view key) const {
 	if (simd_parser_) {
-		std::string_view captures[16];
+		std::string_view captures[MAX_KEY_CAPTURES];
 		std::string_view attr;
 		if (simd_parser_->parse_fast(key, captures, attr)) {
 			ParsedKeyView result;
@@ -231,14 +213,6 @@ std::string KeyParser::build_prefix(const std::vector<std::string> &capture_valu
 	}
 
 	return result;
-}
-
-bool KeyParser::starts_with_prefix(std::string_view key) const {
-	const auto &prefix = pattern_.literal_prefix();
-	if (key.size() < prefix.size()) {
-		return false;
-	}
-	return key.compare(0, prefix.size(), prefix.data(), prefix.size()) == 0;
 }
 
 std::optional<std::string> KeyParser::try_get_uniform_delimiter() const {

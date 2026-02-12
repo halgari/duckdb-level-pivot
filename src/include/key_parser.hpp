@@ -11,31 +11,12 @@
 
 namespace level_pivot {
 
-struct ParsedKey {
-	std::vector<std::string> capture_values;
-	std::string attr_name;
-
-	bool operator==(const ParsedKey &other) const {
-		return capture_values == other.capture_values && attr_name == other.attr_name;
-	}
-};
-
 struct ParsedKeyView {
 	std::vector<std::string_view> capture_values;
 	std::string_view attr_name;
 
 	bool operator==(const ParsedKeyView &other) const {
 		return capture_values == other.capture_values && attr_name == other.attr_name;
-	}
-
-	ParsedKey to_owned() const {
-		ParsedKey result;
-		result.capture_values.reserve(capture_values.size());
-		for (const auto &sv : capture_values) {
-			result.capture_values.emplace_back(sv);
-		}
-		result.attr_name = std::string(attr_name);
-		return result;
 	}
 };
 
@@ -48,8 +29,6 @@ public:
 		return pattern_;
 	}
 
-	bool matches(std::string_view key) const;
-	std::optional<ParsedKey> parse(std::string_view key) const;
 	std::optional<ParsedKeyView> parse_view(std::string_view key) const;
 
 	// Zero-alloc parse into pre-allocated buffers. Returns false if key doesn't match.
@@ -61,7 +40,6 @@ public:
 
 	std::string build_prefix() const;
 	std::string build_prefix(const std::vector<std::string> &capture_values) const;
-	bool starts_with_prefix(std::string_view key) const;
 
 private:
 	KeyPattern pattern_;

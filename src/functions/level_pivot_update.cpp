@@ -1,16 +1,9 @@
 #include "level_pivot_update.hpp"
-#include "level_pivot_table_entry.hpp"
-#include "level_pivot_catalog.hpp"
-#include "level_pivot_transaction.hpp"
+#include "level_pivot_sink_helpers.hpp"
 #include "level_pivot_utils.hpp"
 #include "key_parser.hpp"
-#include "level_pivot_storage.hpp"
 
 namespace duckdb {
-
-struct LevelPivotUpdateGlobalState : public GlobalSinkState {
-	idx_t update_count = 0;
-};
 
 LevelPivotUpdate::LevelPivotUpdate(PhysicalPlan &plan, vector<LogicalType> types, TableCatalogEntry &table,
                                    vector<PhysicalIndex> columns, idx_t estimated_cardinality)
@@ -19,23 +12,19 @@ LevelPivotUpdate::LevelPivotUpdate(PhysicalPlan &plan, vector<LogicalType> types
 }
 
 unique_ptr<GlobalSinkState> LevelPivotUpdate::GetGlobalSinkState(ClientContext &context) const {
-	return make_uniq<LevelPivotUpdateGlobalState>();
+	return make_uniq<LevelPivotSinkGlobalState>();
 }
 
 SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
-	auto &gstate = input.global_state.Cast<LevelPivotUpdateGlobalState>();
-	auto &lp_table = table.Cast<LevelPivotTableEntry>();
-	auto &connection = *lp_table.GetConnection();
-	auto &catalog = lp_table.ParentCatalog().Cast<LevelPivotCatalog>();
-	auto &txn = Transaction::Get(context.client, catalog).Cast<LevelPivotTransaction>();
-	auto &schema = catalog.GetMainSchema();
+	auto &gstate = input.global_state.Cast<LevelPivotSinkGlobalState>();
+	auto ctx = GetSinkContext(context, table);
 
-	if (lp_table.GetTableMode() == LevelPivotTableMode::PIVOT) {
-		auto &parser = lp_table.GetKeyParser();
-		auto &table_columns = lp_table.GetColumns();
-		auto &identity_cols = lp_table.GetIdentityColumns();
-		auto row_id_cols = lp_table.GetRowIdColumns();
-		auto batch = connection.create_batch();
+	if (ctx.table.GetTableMode() == LevelPivotTableMode::PIVOT) {
+		auto &parser = ctx.table.GetKeyParser();
+		auto &table_columns = ctx.table.GetColumns();
+		auto &identity_cols = ctx.table.GetIdentityColumns();
+		auto row_id_cols = ctx.table.GetRowIdColumns();
+		auto batch = ctx.connection.create_batch();
 
 		// The child chunk layout (from DuckDB's update projection):
 		// [update_col_0, update_col_1, ..., row_id_col_0, row_id_col_1, ...]
@@ -80,15 +69,15 @@ SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chun
 				} else {
 					batch.put(key, new_val.ToString());
 				}
-				txn.CheckKeyAgainstTables(key, schema);
+				ctx.txn.CheckKeyAgainstTables(key, ctx.schema);
 			}
 		}
 
 		batch.commit();
-		gstate.update_count += chunk.size();
+		gstate.row_count += chunk.size();
 	} else {
 		// Raw mode: chunk layout is [update_value, row_id_key]
-		auto batch = connection.create_batch();
+		auto batch = ctx.connection.create_batch();
 		idx_t key_col_idx = chunk.ColumnCount() - 1;
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			auto key_val = chunk.data[key_col_idx].GetValue(row);
@@ -98,10 +87,10 @@ SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chun
 			auto val = chunk.data[0].GetValue(row);
 			std::string key = key_val.ToString();
 			batch.put(key, val.IsNull() ? "" : val.ToString());
-			txn.CheckKeyAgainstTables(key, schema);
+			ctx.txn.CheckKeyAgainstTables(key, ctx.schema);
 		}
 		batch.commit();
-		gstate.update_count += chunk.size();
+		gstate.row_count += chunk.size();
 	}
 
 	return SinkResultType::NEED_MORE_INPUT;
@@ -114,10 +103,7 @@ SinkFinalizeType LevelPivotUpdate::Finalize(Pipeline &pipeline, Event &event, Cl
 
 SourceResultType LevelPivotUpdate::GetData(ExecutionContext &context, DataChunk &chunk,
                                            OperatorSourceInput &input) const {
-	auto &gstate = sink_state->Cast<LevelPivotUpdateGlobalState>();
-	chunk.SetCardinality(1);
-	chunk.SetValue(0, 0, Value::BIGINT(static_cast<int64_t>(gstate.update_count)));
-	return SourceResultType::FINISHED;
+	return EmitRowCount(*sink_state, chunk);
 }
 
 } // namespace duckdb

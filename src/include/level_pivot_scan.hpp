@@ -19,7 +19,7 @@ struct LevelPivotScanData : public TableFunctionData {
 
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<LevelPivotScanData>();
-		return table_entry == other.table_entry;
+		return table_entry == other.table_entry && filter_prefix == other.filter_prefix;
 	}
 
 	bool SupportStatementCache() const override {
