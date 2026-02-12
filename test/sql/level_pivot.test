@@ -183,6 +183,216 @@ SELECT * FROM testdb.kv WHERE key = 'hello';
 ----
 hello	universe
 
+# ===== DROP TABLE =====
+
+# Drop the kv table
+statement ok
+CALL level_pivot_drop_table('testdb', 'kv');
+
+# Verify kv table is gone
+statement error
+SELECT * FROM testdb.kv;
+----
+Catalog Error
+
+# Verify users table still works after dropping kv
+query I
+SELECT count(*) FROM testdb.users;
+----
+5
+
+# ===== Column projection =====
+
+# SELECT specific columns (tests projection pushdown)
+query II rowsort
+SELECT name, email FROM testdb.users WHERE "group" = 'admins';
+----
+Alice	newalice@ex.com
+Bob	bob@ex.com
+
+# SELECT single identity column
+query I rowsort
+SELECT id FROM testdb.users WHERE "group" = 'editors';
+----
+u4
+u5
+
+# ===== INSERT INTO ... SELECT =====
+
+# Create a second pivot table
+statement ok
+CALL level_pivot_create_table('testdb', 'users_backup', 'users_backup##{group}##{id}##{attr}', ['group', 'id', 'name', 'email']);
+
+# Copy admins via INSERT INTO ... SELECT
+statement ok
+INSERT INTO testdb.users_backup SELECT * FROM testdb.users WHERE "group" = 'admins';
+
+query IIII rowsort
+SELECT * FROM testdb.users_backup;
+----
+admins	u1	Alice	newalice@ex.com
+admins	u2	Bob	bob@ex.com
+
+# Drop backup table
+statement ok
+CALL level_pivot_drop_table('testdb', 'users_backup');
+
+# ===== SHOW TABLES integration =====
+
+query I
+SELECT table_name FROM information_schema.tables WHERE table_catalog = 'testdb';
+----
+users
+
+# ===== Error conditions =====
+
+# Pivot table without pattern should error
+statement error
+CALL level_pivot_create_table('testdb', 'bad_table', NULL, ['a', 'b']);
+----
+Pattern is required for pivot tables
+
+# Raw table with wrong column count should error
+statement error
+CALL level_pivot_create_table('testdb', 'bad_raw', NULL, ['a', 'b', 'c'], table_mode := 'raw');
+----
+Raw tables must have exactly 2 columns
+
+# ===== Typed column tests =====
+
+# Create a typed pivot table with BIGINT and DOUBLE columns
+statement ok
+CALL level_pivot_create_table('testdb', 'metrics', 'metrics##{host}##{ts}##{attr}', ['host', 'ts', 'cpu_pct', 'mem_mb'], column_types := ['VARCHAR', 'BIGINT', 'DOUBLE', 'BIGINT']);
+
+# INSERT typed values
+statement ok
+INSERT INTO testdb.metrics VALUES ('srv1', 1000, 55.5, 2048);
+
+statement ok
+INSERT INTO testdb.metrics VALUES ('srv1', 2000, 72.3, 4096);
+
+statement ok
+INSERT INTO testdb.metrics VALUES ('srv2', 1500, 30.0, 1024);
+
+# Verify arithmetic works (SUM, MAX on typed columns)
+query IR
+SELECT SUM(mem_mb), MAX(cpu_pct) FROM testdb.metrics;
+----
+7168	72.3
+
+# Verify typed numeric comparison (not string comparison)
+# With string comparison, '2000' < '500' but with BIGINT, 2000 > 500
+query IIRI rowsort
+SELECT * FROM testdb.metrics WHERE ts > 1500;
+----
+srv1	2000	72.3	4096
+
+# UPDATE with typed filter
+statement ok
+UPDATE testdb.metrics SET cpu_pct = 99.9 WHERE host = 'srv2' AND ts = 1500;
+
+query IR
+SELECT cpu_pct, mem_mb FROM testdb.metrics WHERE host = 'srv2' AND ts = 1500;
+----
+99.9	1024
+
+# DELETE with typed filter
+statement ok
+DELETE FROM testdb.metrics WHERE host = 'srv1' AND ts = 1000;
+
+query I
+SELECT count(*) FROM testdb.metrics;
+----
+2
+
+# Test BOOLEAN type round-trip
+statement ok
+CALL level_pivot_create_table('testdb', 'flags', 'flags##{name}##{attr}', ['name', 'active', 'count'], column_types := ['VARCHAR', 'BOOLEAN', 'INTEGER']);
+
+statement ok
+INSERT INTO testdb.flags VALUES ('feature_x', true, 42);
+
+statement ok
+INSERT INTO testdb.flags VALUES ('feature_y', false, 0);
+
+query IRI rowsort
+SELECT * FROM testdb.flags;
+----
+feature_x	true	42
+feature_y	false	0
+
+# Verify boolean filter works
+query I
+SELECT name FROM testdb.flags WHERE active = true;
+----
+feature_x
+
+# Test backward compatibility (no column_types = all VARCHAR)
+statement ok
+CALL level_pivot_create_table('testdb', 'compat', 'compat##{k}##{attr}', ['k', 'v']);
+
+statement ok
+INSERT INTO testdb.compat VALUES ('a', 'hello');
+
+query II
+SELECT * FROM testdb.compat;
+----
+a	hello
+
+# Test error: mismatched column_types/column_names length
+statement error
+CALL level_pivot_create_table('testdb', 'bad_types', 'bad##{k}##{attr}', ['k', 'v'], column_types := ['VARCHAR']);
+----
+column_types length
+
+# Clean up typed tables
+statement ok
+CALL level_pivot_drop_table('testdb', 'metrics');
+
+statement ok
+CALL level_pivot_drop_table('testdb', 'flags');
+
+statement ok
+CALL level_pivot_drop_table('testdb', 'compat');
+
 # Final DETACH
 statement ok
 DETACH testdb;
+
+# ===== Read-only mode =====
+
+# Re-attach as read-only
+statement ok
+ATTACH '__TEST_DIR__/test_leveldb' AS testdb_ro (TYPE level_pivot, READ_ONLY true);
+
+# Re-create table definition
+statement ok
+CALL level_pivot_create_table('testdb_ro', 'users', 'users##{group}##{id}##{attr}', ['group', 'id', 'name', 'email']);
+
+# SELECT should work on read-only
+query I
+SELECT count(*) FROM testdb_ro.users;
+----
+5
+
+# INSERT should fail on read-only
+statement error
+INSERT INTO testdb_ro.users VALUES ('ro_test', 'u99', 'Nobody', 'no@ex.com');
+----
+attached in read-only mode
+
+# DELETE should fail on read-only
+statement error
+DELETE FROM testdb_ro.users WHERE "group" = 'admins' AND id = 'u1';
+----
+attached in read-only mode
+
+# UPDATE should fail on read-only
+statement error
+UPDATE testdb_ro.users SET email = 'x' WHERE "group" = 'admins' AND id = 'u1';
+----
+attached in read-only mode
+
+# Detach read-only
+statement ok
+DETACH testdb_ro;

@@ -135,6 +135,13 @@ static unique_ptr<LocalTableFunctionState> LevelPivotInitLocal(ExecutionContext 
 	return make_uniq<LevelPivotScanLocalState>();
 }
 
+static Value StringToTypedValue(const std::string &str_value, const LogicalType &type) {
+	if (type.id() == LogicalTypeId::VARCHAR) {
+		return Value(str_value);
+	}
+	return Value(str_value).DefaultCastAs(type);
+}
+
 static bool IsWithinPrefix(std::string_view key, const std::string &prefix) {
 	if (prefix.empty()) {
 		return true;
@@ -242,7 +249,7 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 							if (capture_idx >= 0 &&
 							    static_cast<size_t>(capture_idx) < lstate.current_identity->size()) {
 								output.data[i].SetValue(count,
-								                        Value((*lstate.current_identity)[capture_idx]));
+								                        StringToTypedValue((*lstate.current_identity)[capture_idx], col.Type()));
 							} else {
 								output.data[i].SetValue(count, Value());
 							}
@@ -255,7 +262,7 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 						// Attr column
 						auto it = lstate.current_attrs.find(col_name);
 						if (it != lstate.current_attrs.end()) {
-							output.data[i].SetValue(count, Value(it->second));
+							output.data[i].SetValue(count, StringToTypedValue(it->second, col.Type()));
 						} else {
 							output.data[i].SetValue(count, Value());
 						}
@@ -315,7 +322,7 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 						auto capture_idx = parser.pattern().capture_index(col_name);
 						if (capture_idx >= 0 &&
 						    static_cast<size_t>(capture_idx) < lstate.current_identity->size()) {
-							output.data[i].SetValue(count, Value((*lstate.current_identity)[capture_idx]));
+							output.data[i].SetValue(count, StringToTypedValue((*lstate.current_identity)[capture_idx], col.Type()));
 						} else {
 							output.data[i].SetValue(count, Value());
 						}
@@ -327,7 +334,7 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 				if (!found) {
 					auto it = lstate.current_attrs.find(col_name);
 					if (it != lstate.current_attrs.end()) {
-						output.data[i].SetValue(count, Value(it->second));
+						output.data[i].SetValue(count, StringToTypedValue(it->second, col.Type()));
 					} else {
 						output.data[i].SetValue(count, Value());
 					}
@@ -379,17 +386,19 @@ static void RawScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalState 
 		// Strip the prefix from the key for user-facing output
 		std::string_view user_key = prefix.empty() ? key_sv : key_sv.substr(prefix.size());
 
+		auto &columns = table_entry.GetColumns();
 		for (idx_t i = 0; i < column_ids.size(); i++) {
 			auto col_idx = column_ids[i];
 			if (col_idx == COLUMN_IDENTIFIER_ROW_ID) {
 				continue;
 			}
+			auto &col_type = columns.GetColumn(LogicalIndex(col_idx)).Type();
 			if (col_idx == 0) {
 				// Key column (with prefix stripped)
-				output.data[i].SetValue(count, Value(std::string(user_key)));
+				output.data[i].SetValue(count, StringToTypedValue(std::string(user_key), col_type));
 			} else if (col_idx == 1) {
 				// Value column
-				output.data[i].SetValue(count, Value(std::string(val_sv)));
+				output.data[i].SetValue(count, StringToTypedValue(std::string(val_sv), col_type));
 			}
 		}
 		count++;

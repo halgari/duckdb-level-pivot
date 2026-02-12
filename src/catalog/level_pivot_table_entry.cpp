@@ -85,14 +85,15 @@ virtual_column_map_t LevelPivotTableEntry::GetVirtualColumns() const {
 			auto &cols = GetColumns();
 			for (auto &col : cols.Logical()) {
 				if (col.Name() == id_col) {
-					result.insert(make_pair(col.Logical().index, TableColumn(col.Name(), LogicalType::VARCHAR)));
+					result.insert(make_pair(col.Logical().index, TableColumn(col.Name(), col.Type())));
 					break;
 				}
 			}
 		}
 	} else {
 		// Raw mode: key column (index 0)
-		result.insert(make_pair(0, TableColumn("key", LogicalType::VARCHAR)));
+		auto &key_col = GetColumns().GetColumn(LogicalIndex(0));
+		result.insert(make_pair(0, TableColumn(key_col.Name(), key_col.Type())));
 	}
 	return result;
 }

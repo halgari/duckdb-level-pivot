@@ -2,6 +2,7 @@
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/common/types.hpp"
 
 namespace duckdb {
 
@@ -10,6 +11,7 @@ struct CreateTableBindData : public TableFunctionData {
 	string table_name;
 	string pattern;
 	vector<string> column_names;
+	vector<LogicalType> column_types;
 	string table_mode; // "pivot" or "raw"
 	bool done = false;
 };
@@ -33,6 +35,22 @@ static unique_ptr<FunctionData> CreateTableBind(ClientContext &context, TableFun
 	auto &col_list = ListValue::GetChildren(input.inputs[3]);
 	for (auto &col : col_list) {
 		data->column_names.push_back(col.GetValue<string>());
+	}
+
+	// Check for column_types named parameter
+	auto ct_it = input.named_parameters.find("column_types");
+	if (ct_it != input.named_parameters.end()) {
+		auto &type_list = ListValue::GetChildren(ct_it->second);
+		if (type_list.size() != data->column_names.size()) {
+			throw InvalidInputException("column_types length (%d) must match column_names length (%d)",
+			                            type_list.size(), data->column_names.size());
+		}
+		for (auto &type_val : type_list) {
+			data->column_types.push_back(TransformStringToLogicalType(type_val.GetValue<string>()));
+		}
+	} else {
+		// Default: all VARCHAR
+		data->column_types.resize(data->column_names.size(), LogicalType::VARCHAR);
 	}
 
 	// Check for table_mode named parameter
@@ -61,12 +79,13 @@ static void CreateTableFunc(ClientContext &context, TableFunctionInput &data, Da
 	auto &lp_catalog = catalog.Cast<LevelPivotCatalog>();
 
 	if (bind_data.table_mode == "raw") {
-		lp_catalog.CreateRawTable(bind_data.table_name, bind_data.column_names);
+		lp_catalog.CreateRawTable(bind_data.table_name, bind_data.column_names, bind_data.column_types);
 	} else {
 		if (bind_data.pattern.empty()) {
 			throw InvalidInputException("Pattern is required for pivot tables");
 		}
-		lp_catalog.CreatePivotTable(bind_data.table_name, bind_data.pattern, bind_data.column_names);
+		lp_catalog.CreatePivotTable(bind_data.table_name, bind_data.pattern, bind_data.column_names,
+		                            bind_data.column_types);
 	}
 
 	output.SetCardinality(1);
@@ -80,6 +99,7 @@ TableFunction GetCreateTableFunction() {
 	                    LogicalType::LIST(LogicalType::VARCHAR)},
 	                   CreateTableFunc, CreateTableBind);
 	func.named_parameters["table_mode"] = LogicalType::VARCHAR;
+	func.named_parameters["column_types"] = LogicalType::LIST(LogicalType::VARCHAR);
 	return func;
 }
 
