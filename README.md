@@ -177,6 +177,21 @@ CALL level_pivot_create_table('db', 'users', 'users##{group}##{id}##{attr}',
 SELECT * FROM db.users;  -- Alice is still here
 ```
 
+## Dirty Table Tracking
+
+LevelPivot tracks which tables have been modified within the current transaction. The `level_pivot_dirty_tables()` table function returns the set of tables that have received writes (INSERT, UPDATE, or DELETE) since the transaction began.
+
+```sql
+SELECT * FROM level_pivot_dirty_tables();
+-- database_name | table_name | table_mode
+-- testdb        | users      | pivot
+-- testdb        | kv2        | raw
+```
+
+This is useful for change-detection workflows — for example, selectively syncing or reprocessing only the tables that changed. The dirty set resets when the transaction commits or rolls back.
+
+Dirty tracking is key-aware: a raw-mode write only marks a pivot table as dirty if the written key actually matches that table's key pattern. For example, writing key `users##admins##u1##name` into a raw table will also mark the `users` pivot table dirty (since the key matches its pattern), but writing `something_else` will not.
+
 ## Additional Features
 
 - **Multi-row INSERT**: `INSERT INTO db.t VALUES (...), (...), (...);`
