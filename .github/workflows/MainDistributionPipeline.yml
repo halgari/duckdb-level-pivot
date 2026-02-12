@@ -20,14 +20,25 @@ jobs:
       ci_tools_version: v1.4.4
       extension_name: level_pivot
 
-  code-quality-check:
-    name: Code Quality Check
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.4.4
-    with:
-      duckdb_version: v1.4.4
-      ci_tools_version: v1.4.4
-      extension_name: level_pivot
-      format_checks: 'format'
+  format-check:
+    name: Format Check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: 'true'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y -qq
+          sudo apt-get install -y -qq ninja-build clang-format-11
+          pip install cmake-format 'black==24.*' cxxheaderparser pcpp 'clang_format==11.0.1'
+
+      - name: Run format check
+        run: make format-check
+        env:
+          GEN: ninja
 
   tidy-check:
     name: Tidy Check
