@@ -58,13 +58,11 @@ SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chun
 		batch.commit();
 		gstate.delete_count += chunk.size();
 	} else {
-		// Raw mode: the child emits the key column (with prefix already)
-		auto &prefix = lp_table.GetRawKeyPrefix();
 		auto batch = connection.create_batch();
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			auto key_val = chunk.data[0].GetValue(row);
 			if (!key_val.IsNull()) {
-				batch.del(prefix + key_val.ToString());
+				batch.del(key_val.ToString());
 			}
 		}
 		batch.commit();

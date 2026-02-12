@@ -79,8 +79,6 @@ SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chun
 		gstate.update_count += chunk.size();
 	} else {
 		// Raw mode: chunk layout is [update_value, row_id_key]
-		// Row ID (key) is at the end, key has prefix already applied
-		auto &prefix = lp_table.GetRawKeyPrefix();
 		auto batch = connection.create_batch();
 		idx_t key_col_idx = chunk.ColumnCount() - 1;
 		for (idx_t row = 0; row < chunk.size(); row++) {
@@ -89,7 +87,7 @@ SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chun
 				continue;
 			}
 			auto val = chunk.data[0].GetValue(row);
-			batch.put(prefix + key_val.ToString(), val.IsNull() ? "" : val.ToString());
+			batch.put(key_val.ToString(), val.IsNull() ? "" : val.ToString());
 		}
 		batch.commit();
 		gstate.update_count += chunk.size();

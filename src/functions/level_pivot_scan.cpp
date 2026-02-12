@@ -306,32 +306,17 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 static void RawScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalState &lstate,
                     LevelPivotScanGlobalState &gstate, DataChunk &output, const vector<column_t> &column_ids) {
 	auto &connection = *table_entry.GetConnection();
-	auto &prefix = table_entry.GetRawKeyPrefix();
 
 	if (!lstate.initialized) {
 		lstate.iterator = std::make_unique<level_pivot::LevelDBIterator>(connection.iterator());
-		lstate.prefix = prefix;
-		if (prefix.empty()) {
-			lstate.iterator->seek_to_first();
-		} else {
-			lstate.iterator->seek(prefix);
-		}
+		lstate.iterator->seek_to_first();
 		lstate.initialized = true;
 	}
 
 	idx_t count = 0;
 	while (count < STANDARD_VECTOR_SIZE && lstate.iterator && lstate.iterator->valid()) {
 		std::string_view key_sv = lstate.iterator->key_view();
-
-		// Check prefix bounds
-		if (!prefix.empty() && !IsWithinPrefix(key_sv, prefix)) {
-			gstate.done = true;
-			break;
-		}
-
 		std::string_view val_sv = lstate.iterator->value_view();
-		// Strip the prefix from the key for user-facing output
-		std::string_view user_key = prefix.empty() ? key_sv : key_sv.substr(prefix.size());
 
 		auto &columns = table_entry.GetColumns();
 		for (idx_t i = 0; i < column_ids.size(); i++) {
@@ -341,10 +326,8 @@ static void RawScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalState 
 			}
 			auto &col_type = columns.GetColumn(LogicalIndex(col_idx)).Type();
 			if (col_idx == 0) {
-				// Key column (with prefix stripped)
-				output.data[i].SetValue(count, StringToTypedValue(std::string(user_key), col_type));
+				output.data[i].SetValue(count, StringToTypedValue(std::string(key_sv), col_type));
 			} else if (col_idx == 1) {
-				// Value column
 				output.data[i].SetValue(count, StringToTypedValue(std::string(val_sv), col_type));
 			}
 		}

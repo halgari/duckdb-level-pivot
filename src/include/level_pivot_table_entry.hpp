@@ -45,10 +45,6 @@ public:
 		return attr_columns_;
 	}
 
-	const string &GetRawKeyPrefix() const {
-		return raw_key_prefix_;
-	}
-
 	// Map column name to its index in the column list
 	idx_t GetColumnIndex(const string &name) const;
 
@@ -65,7 +61,6 @@ private:
 	std::unique_ptr<level_pivot::KeyParser> parser_; // nullptr for raw mode
 	vector<string> identity_columns_;
 	vector<string> attr_columns_;
-	string raw_key_prefix_; // For raw mode: table_name + "##"
 };
 
 } // namespace duckdb

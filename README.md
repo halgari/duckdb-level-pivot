@@ -93,8 +93,6 @@ INSERT INTO db.kv VALUES ('hello', 'world');
 SELECT * FROM db.kv;
 ```
 
-Keys are scoped with a `tablename##` prefix in LevelDB to prevent collisions between tables.
-
 ## ATTACH Options
 
 ```sql

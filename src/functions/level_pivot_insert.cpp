@@ -70,7 +70,6 @@ SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chun
 		gstate.insert_count += chunk.size();
 	} else {
 		// Raw mode: column 0 = key, column 1 = value
-		auto &prefix = lp_table.GetRawKeyPrefix();
 		auto batch = connection.create_batch();
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			auto key_val = chunk.data[0].GetValue(row);
@@ -78,7 +77,7 @@ SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chun
 			if (key_val.IsNull()) {
 				throw InvalidInputException("Cannot insert NULL key in raw mode");
 			}
-			batch.put(prefix + key_val.ToString(), val_val.IsNull() ? "" : val_val.ToString());
+			batch.put(key_val.ToString(), val_val.IsNull() ? "" : val_val.ToString());
 		}
 		batch.commit();
 		gstate.insert_count += chunk.size();
