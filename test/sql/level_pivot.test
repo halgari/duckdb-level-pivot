@@ -1,0 +1,23 @@
+# name: test/sql/level_pivot.test
+# description: test level_pivot extension
+# group: [sql]
+
+# Before we load the extension, this will fail
+statement error
+SELECT level_pivot('Sam');
+----
+Catalog Error: Scalar Function with name level_pivot does not exist!
+
+# Require statement will ensure this test is run with this extension loaded
+require level_pivot
+
+# Confirm the extension works
+query I
+SELECT level_pivot('Sam');
+----
+LevelPivot Sam 🐥
+
+query I
+SELECT level_pivot_openssl_version('Michael') ILIKE 'LevelPivot Michael, my linked OpenSSL version is OpenSSL%';
+----
+true
