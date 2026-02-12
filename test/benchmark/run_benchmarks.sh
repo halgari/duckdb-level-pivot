@@ -97,17 +97,49 @@ for size in "${SIZE_ARRAY[@]}"; do
         echo ""
         echo "Running: ${benchmark}"
 
-        for iteration in $(seq 1 "${ITERATIONS}"); do
-            result=$(run_benchmark "${benchmark}" "${size}" "${iteration}")
-            duration_ms=$(echo "${result}" | cut -d',' -f1)
-            rows_affected=$(echo "${result}" | cut -d',' -f2)
+        sql_fn="sql_${benchmark}"
+        attrs_var="ATTRS_PER_ROW_${benchmark}"
+        attrs_per_row="${!attrs_var:-0}"
 
-            if [[ "${duration_ms}" == "-1" ]]; then
-                echo "  [${iteration}/${ITERATIONS}] ERROR"
-            else
-                print_progress "${benchmark}" "${size}" "${iteration}" "${ITERATIONS}" "${duration_ms}" "${rows_affected}"
+        if declare -f "${sql_fn}" >/dev/null 2>&1; then
+            # Multi-iteration mode: run all iterations in one process (scan benchmarks)
+            bench_sql=$("${sql_fn}" "${size}")
+
+            timed_output=$(run_duckdb_multi "${bench_sql}" "${ITERATIONS}")
+            if [[ $? -ne 0 ]]; then
+                echo "  ERROR running ${benchmark}"
+                continue
             fi
-        done
+
+            # Parse interleaved timestamps and results
+            # Format: t0, result1, t1, result2, t2, ..., resultN, tN
+            mapfile -t lines <<< "${timed_output}"
+
+            for iteration in $(seq 1 "${ITERATIONS}"); do
+                t_prev="${lines[$((2 * (iteration - 1)))]}"
+                t_curr="${lines[$((2 * iteration))]}"
+                result_line="${lines[$((2 * iteration - 1))]}"
+
+                duration_ms=$(awk "BEGIN {printf \"%.3f\", (${t_curr} - ${t_prev}) / 1000}")
+                row_count=$(echo "${result_line}" | grep -oE '[0-9]+' | tail -1)
+
+                record_result "${benchmark}" "${size}" "${iteration}" "${duration_ms}" "${row_count}" "${attrs_per_row}"
+                print_progress "${benchmark}" "${size}" "${iteration}" "${ITERATIONS}" "${duration_ms}" "${row_count}" "${attrs_per_row}"
+            done
+        else
+            # Per-iteration mode (for DML benchmarks with setup/teardown)
+            for iteration in $(seq 1 "${ITERATIONS}"); do
+                result=$(run_benchmark "${benchmark}" "${size}" "${iteration}" "${attrs_per_row}")
+                duration_ms=$(echo "${result}" | cut -d',' -f1)
+                rows_affected=$(echo "${result}" | cut -d',' -f2)
+
+                if [[ "${duration_ms}" == "-1" ]]; then
+                    echo "  [${iteration}/${ITERATIONS}] ERROR"
+                else
+                    print_progress "${benchmark}" "${size}" "${iteration}" "${ITERATIONS}" "${duration_ms}" "${rows_affected}" "${attrs_per_row}"
+                fi
+            done
+        fi
     done
 done
 
