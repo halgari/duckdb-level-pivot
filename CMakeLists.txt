@@ -2,7 +2,13 @@ cmake_minimum_required(VERSION 3.5)
 
 set(TARGET_NAME level_pivot)
 
-find_package(leveldb CONFIG REQUIRED)
+if(${CLANG_TIDY})
+    # Tidy only needs compile_commands.json, not the actual library.
+    # CI tidy runners don't have vcpkg/leveldb installed.
+    find_package(leveldb CONFIG)
+else()
+    find_package(leveldb CONFIG REQUIRED)
+endif()
 
 set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
@@ -30,8 +36,10 @@ set(EXTENSION_SOURCES
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
-target_link_libraries(${EXTENSION_NAME} leveldb::leveldb)
-target_link_libraries(${LOADABLE_EXTENSION_NAME} leveldb::leveldb)
+if(leveldb_FOUND)
+    target_link_libraries(${EXTENSION_NAME} leveldb::leveldb)
+    target_link_libraries(${LOADABLE_EXTENSION_NAME} leveldb::leveldb)
+endif()
 
 install(
   TARGETS ${EXTENSION_NAME}
