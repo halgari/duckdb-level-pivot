@@ -1,23 +1,86 @@
 # name: test/sql/level_pivot.test
 # description: test level_pivot extension
-# group: [sql]
+# group: [level_pivot]
 
-# Before we load the extension, this will fail
-statement error
-SELECT level_pivot('Sam');
-----
-Catalog Error: Scalar Function with name level_pivot does not exist!
-
-# Require statement will ensure this test is run with this extension loaded
 require level_pivot
 
-# Confirm the extension works
-query I
-SELECT level_pivot('Sam');
+# ATTACH a LevelDB database
+statement ok
+ATTACH '__TEST_DIR__/test_leveldb' AS testdb (TYPE level_pivot, READ_ONLY false, CREATE_IF_MISSING true);
+
+# Create a pivot table
+statement ok
+CALL level_pivot_create_table('testdb', 'users', 'users##{group}##{id}##{attr}', ['group', 'id', 'name', 'email']);
+
+# INSERT
+statement ok
+INSERT INTO testdb.users VALUES ('admins', 'u1', 'Alice', 'alice@ex.com');
+
+statement ok
+INSERT INTO testdb.users VALUES ('admins', 'u2', 'Bob', 'bob@ex.com');
+
+statement ok
+INSERT INTO testdb.users VALUES ('viewers', 'u3', 'Charlie', 'charlie@ex.com');
+
+# SELECT all
+query IIII rowsort
+SELECT * FROM testdb.users;
 ----
-LevelPivot Sam 🐥
+admins	u1	Alice	alice@ex.com
+admins	u2	Bob	bob@ex.com
+viewers	u3	Charlie	charlie@ex.com
+
+# SELECT with filter
+query IIII
+SELECT * FROM testdb.users WHERE "group" = 'admins' AND id = 'u1';
+----
+admins	u1	Alice	alice@ex.com
+
+# UPDATE
+statement ok
+UPDATE testdb.users SET email = 'newalice@ex.com' WHERE "group" = 'admins' AND id = 'u1';
+
+query IIII
+SELECT * FROM testdb.users WHERE "group" = 'admins' AND id = 'u1';
+----
+admins	u1	Alice	newalice@ex.com
+
+# DELETE
+statement ok
+DELETE FROM testdb.users WHERE "group" = 'viewers' AND id = 'u3';
 
 query I
-SELECT level_pivot_openssl_version('Michael') ILIKE 'LevelPivot Michael, my linked OpenSSL version is OpenSSL%';
+SELECT count(*) FROM testdb.users;
 ----
-true
+2
+
+# Create a raw table
+statement ok
+CALL level_pivot_create_table('testdb', 'kv', NULL, ['key', 'value'], table_mode := 'raw');
+
+# INSERT into raw table
+statement ok
+INSERT INTO testdb.kv VALUES ('hello', 'world');
+
+statement ok
+INSERT INTO testdb.kv VALUES ('foo', 'bar');
+
+# SELECT from raw table
+query II rowsort
+SELECT * FROM testdb.kv;
+----
+foo	bar
+hello	world
+
+# DELETE from raw table
+statement ok
+DELETE FROM testdb.kv WHERE key = 'foo';
+
+query I
+SELECT count(*) FROM testdb.kv;
+----
+1
+
+# DETACH
+statement ok
+DETACH testdb;
