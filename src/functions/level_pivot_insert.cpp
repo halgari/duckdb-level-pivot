@@ -78,9 +78,14 @@ SinkFinalizeType LevelPivotInsert::Finalize(Pipeline &pipeline, Event &event, Cl
 	return SinkFinalizeType::READY;
 }
 
+SourceResultType LevelPivotInsert::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
+                                                   OperatorSourceInput &input) const {
+	return EmitRowCount(*sink_state, chunk);
+}
+
 SourceResultType LevelPivotInsert::GetData(ExecutionContext &context, DataChunk &chunk,
                                            OperatorSourceInput &input) const {
-	return EmitRowCount(*sink_state, chunk);
+	return GetDataInternal(context, chunk, input);
 }
 
 } // namespace duckdb
