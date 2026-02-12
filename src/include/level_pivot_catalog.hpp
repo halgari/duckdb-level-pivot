@@ -19,6 +19,10 @@ public:
 		return connection_;
 	}
 
+	LevelPivotSchemaEntry &GetMainSchema() {
+		return *main_schema_;
+	}
+
 	// --- Catalog interface ---
 	void Initialize(bool load_builtin) override;
 	string GetCatalogType() override {

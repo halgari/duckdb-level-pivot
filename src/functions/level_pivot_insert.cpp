@@ -1,5 +1,7 @@
 #include "level_pivot_insert.hpp"
 #include "level_pivot_table_entry.hpp"
+#include "level_pivot_catalog.hpp"
+#include "level_pivot_transaction.hpp"
 #include "key_parser.hpp"
 #include "level_pivot_storage.hpp"
 #include <unordered_map>
@@ -23,6 +25,9 @@ SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chun
 	auto &gstate = input.global_state.Cast<LevelPivotInsertGlobalState>();
 	auto &lp_table = table.Cast<LevelPivotTableEntry>();
 	auto &connection = *lp_table.GetConnection();
+	auto &catalog = lp_table.ParentCatalog().Cast<LevelPivotCatalog>();
+	auto &txn = Transaction::Get(context.client, catalog).Cast<LevelPivotTransaction>();
+	auto &schema = catalog.GetMainSchema();
 
 	if (lp_table.GetTableMode() == LevelPivotTableMode::PIVOT) {
 		auto &parser = lp_table.GetKeyParser();
@@ -61,6 +66,7 @@ SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chun
 					if (!val.IsNull()) {
 						std::string key = parser.build(identity_values, attr_name);
 						batch.put(key, val.ToString());
+						txn.CheckKeyAgainstTables(key, schema);
 					}
 				}
 			}
@@ -77,7 +83,9 @@ SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chun
 			if (key_val.IsNull()) {
 				throw InvalidInputException("Cannot insert NULL key in raw mode");
 			}
-			batch.put(key_val.ToString(), val_val.IsNull() ? "" : val_val.ToString());
+			std::string key = key_val.ToString();
+			batch.put(key, val_val.IsNull() ? "" : val_val.ToString());
+			txn.CheckKeyAgainstTables(key, schema);
 		}
 		batch.commit();
 		gstate.insert_count += chunk.size();

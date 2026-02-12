@@ -1,5 +1,7 @@
 #include "level_pivot_update.hpp"
 #include "level_pivot_table_entry.hpp"
+#include "level_pivot_catalog.hpp"
+#include "level_pivot_transaction.hpp"
 #include "level_pivot_utils.hpp"
 #include "key_parser.hpp"
 #include "level_pivot_storage.hpp"
@@ -24,6 +26,9 @@ SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chun
 	auto &gstate = input.global_state.Cast<LevelPivotUpdateGlobalState>();
 	auto &lp_table = table.Cast<LevelPivotTableEntry>();
 	auto &connection = *lp_table.GetConnection();
+	auto &catalog = lp_table.ParentCatalog().Cast<LevelPivotCatalog>();
+	auto &txn = Transaction::Get(context.client, catalog).Cast<LevelPivotTransaction>();
+	auto &schema = catalog.GetMainSchema();
 
 	if (lp_table.GetTableMode() == LevelPivotTableMode::PIVOT) {
 		auto &parser = lp_table.GetKeyParser();
@@ -72,6 +77,7 @@ SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chun
 				} else {
 					batch.put(key, new_val.ToString());
 				}
+				txn.CheckKeyAgainstTables(key, schema);
 			}
 		}
 
@@ -87,7 +93,9 @@ SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chun
 				continue;
 			}
 			auto val = chunk.data[0].GetValue(row);
-			batch.put(key_val.ToString(), val.IsNull() ? "" : val.ToString());
+			std::string key = key_val.ToString();
+			batch.put(key, val.IsNull() ? "" : val.ToString());
+			txn.CheckKeyAgainstTables(key, schema);
 		}
 		batch.commit();
 		gstate.update_count += chunk.size();

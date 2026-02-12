@@ -13,9 +13,10 @@
 
 namespace duckdb {
 
-// Forward declarations for functions defined in level_pivot_create_table.cpp
+// Forward declarations for functions
 TableFunction GetCreateTableFunction();
 TableFunction GetDropTableFunction();
+TableFunction GetDirtyTablesFunction();
 
 static unique_ptr<Catalog> LevelPivotAttach(optional_ptr<StorageExtensionInfo> storage_info, ClientContext &context,
                                             AttachedDatabase &db, const string &name, AttachInfo &info,
@@ -69,6 +70,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// Register utility table functions
 	loader.RegisterFunction(GetCreateTableFunction());
 	loader.RegisterFunction(GetDropTableFunction());
+	loader.RegisterFunction(GetDirtyTablesFunction());
 }
 
 void LevelPivotExtension::Load(ExtensionLoader &loader) {

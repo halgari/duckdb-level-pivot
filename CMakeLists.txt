@@ -25,7 +25,8 @@ set(EXTENSION_SOURCES
     src/functions/level_pivot_insert.cpp
     src/functions/level_pivot_delete.cpp
     src/functions/level_pivot_update.cpp
-    src/functions/level_pivot_create_table.cpp)
+    src/functions/level_pivot_create_table.cpp
+    src/functions/level_pivot_dirty_tables.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})

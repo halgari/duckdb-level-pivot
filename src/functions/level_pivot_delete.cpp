@@ -1,5 +1,7 @@
 #include "level_pivot_delete.hpp"
 #include "level_pivot_table_entry.hpp"
+#include "level_pivot_catalog.hpp"
+#include "level_pivot_transaction.hpp"
 #include "level_pivot_utils.hpp"
 #include "key_parser.hpp"
 #include "level_pivot_storage.hpp"
@@ -23,6 +25,9 @@ SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chun
 	auto &gstate = input.global_state.Cast<LevelPivotDeleteGlobalState>();
 	auto &lp_table = table.Cast<LevelPivotTableEntry>();
 	auto &connection = *lp_table.GetConnection();
+	auto &catalog = lp_table.ParentCatalog().Cast<LevelPivotCatalog>();
+	auto &txn = Transaction::Get(context.client, catalog).Cast<LevelPivotTransaction>();
+	auto &schema = catalog.GetMainSchema();
 
 	if (lp_table.GetTableMode() == LevelPivotTableMode::PIVOT) {
 		auto &parser = lp_table.GetKeyParser();
@@ -49,7 +54,9 @@ SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chun
 
 				auto parsed = parser.parse_view(key_sv);
 				if (parsed && IdentityMatches(identity_values, parsed->capture_values)) {
-					batch.del(std::string(key_sv));
+					std::string key(key_sv);
+					batch.del(key);
+					txn.CheckKeyAgainstTables(key, schema);
 				}
 				iter.next();
 			}
@@ -62,7 +69,9 @@ SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chun
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			auto key_val = chunk.data[0].GetValue(row);
 			if (!key_val.IsNull()) {
-				batch.del(key_val.ToString());
+				std::string key = key_val.ToString();
+				batch.del(key);
+				txn.CheckKeyAgainstTables(key, schema);
 			}
 		}
 		batch.commit();

@@ -2,13 +2,31 @@
 
 #include "duckdb/transaction/transaction_manager.hpp"
 #include "duckdb/transaction/transaction.hpp"
+#include <unordered_set>
+#include <string>
 
 namespace duckdb {
+
+class LevelPivotSchemaEntry;
 
 class LevelPivotTransaction : public Transaction {
 public:
 	LevelPivotTransaction(TransactionManager &manager, ClientContext &context);
 	~LevelPivotTransaction() override;
+
+	//! Check a key against all tables in the schema and mark matching ones dirty
+	void CheckKeyAgainstTables(const std::string &key, LevelPivotSchemaEntry &schema);
+
+	bool HasDirtyTables() const {
+		return !dirty_tables_.empty();
+	}
+	const std::unordered_set<std::string> &GetDirtyTables() const {
+		return dirty_tables_;
+	}
+
+private:
+	std::unordered_set<std::string> dirty_tables_;
+	bool all_dirty_ = false;
 };
 
 class LevelPivotTransactionManager : public TransactionManager {
@@ -20,6 +38,9 @@ public:
 	ErrorData CommitTransaction(ClientContext &context, Transaction &transaction) override;
 	void RollbackTransaction(Transaction &transaction) override;
 	void Checkpoint(ClientContext &context, bool force = false) override;
+
+	//! Get the current transaction, or nullptr if none active
+	LevelPivotTransaction *GetCurrentTransaction();
 
 private:
 	mutex transaction_lock;

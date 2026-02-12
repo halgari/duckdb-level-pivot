@@ -361,6 +361,111 @@ CALL level_pivot_drop_table('testdb', 'flags');
 statement ok
 CALL level_pivot_drop_table('testdb', 'compat');
 
+# ===== Dirty table tracking tests =====
+
+# Create a raw table for dirty tracking tests
+statement ok
+CALL level_pivot_create_table('testdb', 'kv2', NULL, ['key', 'value'], table_mode := 'raw');
+
+# No writes yet in this transaction context → empty result
+query I
+SELECT count(*) FROM level_pivot_dirty_tables();
+----
+0
+
+# Insert into pivot table → marks both users (pivot match) and kv2 (raw, always dirty)
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO testdb.users VALUES ('dirty_test', 'dt1', 'Test', 'test@ex.com');
+
+query III rowsort
+SELECT * FROM level_pivot_dirty_tables();
+----
+testdb	kv2	raw
+testdb	users	pivot
+
+statement ok
+ROLLBACK;
+
+# After rollback, dirty state is cleared (new transaction)
+query I
+SELECT count(*) FROM level_pivot_dirty_tables();
+----
+0
+
+# Update also marks tables dirty
+statement ok
+BEGIN;
+
+statement ok
+UPDATE testdb.users SET email = 'updated@ex.com' WHERE "group" = 'admins' AND id = 'u1';
+
+query III rowsort
+SELECT * FROM level_pivot_dirty_tables();
+----
+testdb	kv2	raw
+testdb	users	pivot
+
+statement ok
+ROLLBACK;
+
+# Delete also marks tables dirty
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM testdb.users WHERE "group" = 'editors' AND id = 'u4';
+
+query III rowsort
+SELECT * FROM level_pivot_dirty_tables();
+----
+testdb	kv2	raw
+testdb	users	pivot
+
+statement ok
+ROLLBACK;
+
+# Raw table insert marks the raw table + matching pivot tables
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO testdb.kv2 VALUES ('users##somegroup##someid##name', 'SomeUser');
+
+query III rowsort
+SELECT * FROM level_pivot_dirty_tables();
+----
+testdb	kv2	raw
+testdb	users	pivot
+
+statement ok
+ROLLBACK;
+
+# Raw table insert with non-matching key only marks the raw table
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO testdb.kv2 VALUES ('something_else', 'value');
+
+query III rowsort
+SELECT * FROM level_pivot_dirty_tables();
+----
+testdb	kv2	raw
+
+statement ok
+ROLLBACK;
+
+# Clean up residual data from dirty tracking tests
+# (LevelDB writes persist through DuckDB ROLLBACK since LevelDB has no transactions)
+statement ok
+DELETE FROM testdb.users WHERE "group" = 'dirty_test';
+
+statement ok
+CALL level_pivot_drop_table('testdb', 'kv2');
+
 # Final DETACH
 statement ok
 DETACH testdb;
