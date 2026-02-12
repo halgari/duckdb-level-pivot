@@ -2,13 +2,7 @@ cmake_minimum_required(VERSION 3.5)
 
 set(TARGET_NAME level_pivot)
 
-if(${CLANG_TIDY})
-    # Tidy only needs compile_commands.json, not the actual library.
-    # CI tidy runners don't have vcpkg/leveldb installed.
-    find_package(leveldb CONFIG)
-else()
-    find_package(leveldb CONFIG REQUIRED)
-endif()
+find_package(leveldb CONFIG REQUIRED)
 
 set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)

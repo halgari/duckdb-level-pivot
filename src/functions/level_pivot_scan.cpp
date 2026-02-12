@@ -160,8 +160,7 @@ static void EmitPivotRow(LevelPivotScanLocalState &lstate, DataChunk &output, id
 		}
 		if (mapping.role == ColumnMapping::IDENTITY) {
 			if (mapping.capture_index < identity.size()) {
-				output.data[i].SetValue(
-				    row_idx, StringToTypedValue(identity[mapping.capture_index], mapping.type));
+				output.data[i].SetValue(row_idx, StringToTypedValue(identity[mapping.capture_index], mapping.type));
 			} else {
 				output.data[i].SetValue(row_idx, Value());
 			}

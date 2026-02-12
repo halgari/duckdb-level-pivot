@@ -27,4 +27,18 @@ jobs:
       duckdb_version: v1.4.4
       ci_tools_version: v1.4.4
       extension_name: level_pivot
-      format_checks: 'format;tidy'
+      format_checks: 'format'
+
+  tidy-check:
+    name: Tidy Check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: 'true'
+
+      - name: Run tidy
+        run: make tidy-check VCPKG_TOOLCHAIN_PATH="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+        env:
+          GEN: ninja
