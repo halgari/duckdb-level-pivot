@@ -1,5 +1,6 @@
 #include "level_pivot_scan.hpp"
 #include "level_pivot_table_entry.hpp"
+#include "level_pivot_utils.hpp"
 #include "key_parser.hpp"
 #include "level_pivot_storage.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
@@ -7,11 +8,20 @@
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include <unordered_set>
 
 namespace duckdb {
 
 LevelPivotScanGlobalState::LevelPivotScanGlobalState() : done(false) {
 }
+
+struct ColumnMapping {
+	enum Role { IDENTITY, ATTR, ROW_ID };
+	Role role;
+	idx_t capture_index; // for IDENTITY: index into identity values
+	std::string name;    // column name (for ATTR lookup)
+	LogicalType type;
+};
 
 struct LevelPivotScanLocalState : public LocalTableFunctionState {
 	// Pivot mode state
@@ -22,6 +32,10 @@ struct LevelPivotScanLocalState : public LocalTableFunctionState {
 	// Current row accumulation (pivot mode)
 	std::optional<std::vector<std::string>> current_identity;
 	std::unordered_map<std::string, std::string> current_attrs;
+
+	// Pre-computed column mapping (built once per scan init)
+	std::vector<ColumnMapping> column_map;
+	std::unordered_set<std::string> known_attrs;
 
 	// Raw mode state
 	bool raw_done = false;
@@ -134,50 +148,35 @@ static unique_ptr<LocalTableFunctionState> LevelPivotInitLocal(ExecutionContext 
 	return make_uniq<LevelPivotScanLocalState>();
 }
 
-static Value StringToTypedValue(const std::string &str_value, const LogicalType &type) {
-	if (type.id() == LogicalTypeId::VARCHAR) {
-		return Value(str_value);
-	}
-	return Value(str_value).DefaultCastAs(type);
-}
-
-static bool IsWithinPrefix(std::string_view key, const std::string &prefix) {
-	if (prefix.empty()) {
-		return true;
-	}
-	if (key.size() < prefix.size()) {
-		return false;
-	}
-	return key.substr(0, prefix.size()) == prefix;
-}
-
-static bool IdentityMatches(const std::vector<std::string> &identity, const std::vector<std::string_view> &views) {
-	if (identity.size() != views.size()) {
-		return false;
-	}
-	for (size_t i = 0; i < identity.size(); ++i) {
-		if (identity[i] != views[i]) {
-			return false;
+static void EmitPivotRow(LevelPivotScanLocalState &lstate, DataChunk &output, idx_t row_idx) {
+	for (idx_t i = 0; i < lstate.column_map.size(); i++) {
+		auto &mapping = lstate.column_map[i];
+		if (mapping.role == ColumnMapping::ROW_ID) {
+			continue;
+		}
+		if (mapping.role == ColumnMapping::IDENTITY) {
+			if (mapping.capture_index < lstate.current_identity->size()) {
+				output.data[i].SetValue(
+				    row_idx, StringToTypedValue((*lstate.current_identity)[mapping.capture_index], mapping.type));
+			} else {
+				output.data[i].SetValue(row_idx, Value());
+			}
+		} else {
+			// ATTR
+			auto it = lstate.current_attrs.find(mapping.name);
+			if (it != lstate.current_attrs.end()) {
+				output.data[i].SetValue(row_idx, StringToTypedValue(it->second, mapping.type));
+			} else {
+				output.data[i].SetValue(row_idx, Value());
+			}
 		}
 	}
-	return true;
-}
-
-static std::vector<std::string> MaterializeIdentity(const std::vector<std::string_view> &views) {
-	std::vector<std::string> result;
-	result.reserve(views.size());
-	for (const auto &sv : views) {
-		result.emplace_back(sv);
-	}
-	return result;
 }
 
 static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalState &lstate,
                       LevelPivotScanGlobalState &gstate, DataChunk &output, const vector<column_t> &column_ids) {
 	auto &parser = table_entry.GetKeyParser();
 	auto &connection = *table_entry.GetConnection();
-	auto &identity_cols = table_entry.GetIdentityColumns();
-	auto &attr_cols = table_entry.GetAttrColumns();
 	auto &columns = table_entry.GetColumns();
 
 	if (!lstate.initialized) {
@@ -189,6 +188,34 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 		} else {
 			lstate.iterator->seek(lstate.prefix);
 		}
+
+		// Pre-compute column mapping and known attrs set
+		auto &identity_cols = table_entry.GetIdentityColumns();
+		auto &attr_cols = table_entry.GetAttrColumns();
+		std::unordered_set<std::string> identity_set(identity_cols.begin(), identity_cols.end());
+
+		lstate.column_map.resize(column_ids.size());
+		for (idx_t i = 0; i < column_ids.size(); i++) {
+			auto col_idx = column_ids[i];
+			if (col_idx == COLUMN_IDENTIFIER_ROW_ID) {
+				lstate.column_map[i].role = ColumnMapping::ROW_ID;
+				continue;
+			}
+			auto &col = columns.GetColumn(LogicalIndex(col_idx));
+			auto &col_name = col.Name();
+			lstate.column_map[i].name = col_name;
+			lstate.column_map[i].type = col.Type();
+
+			if (identity_set.count(col_name)) {
+				lstate.column_map[i].role = ColumnMapping::IDENTITY;
+				auto capture_idx = parser.pattern().capture_index(col_name);
+				lstate.column_map[i].capture_index = capture_idx >= 0 ? static_cast<idx_t>(capture_idx) : 0;
+			} else {
+				lstate.column_map[i].role = ColumnMapping::ATTR;
+			}
+		}
+
+		lstate.known_attrs = std::unordered_set<std::string>(attr_cols.begin(), attr_cols.end());
 		lstate.initialized = true;
 	}
 
@@ -230,43 +257,7 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 				auto new_identity = MaterializeIdentity(parsed->capture_values);
 				std::string_view attr_name = parsed->attr_name;
 
-				// Emit current row
-				for (idx_t i = 0; i < column_ids.size(); i++) {
-					auto col_idx = column_ids[i];
-					if (col_idx == COLUMN_IDENTIFIER_ROW_ID) {
-						// Emit serialized identity as row_id (shouldn't normally happen with our GetRowIdColumns)
-						continue;
-					}
-					auto &col = columns.GetColumn(LogicalIndex(col_idx));
-					auto &col_name = col.Name();
-
-					// Check if identity column
-					bool found = false;
-					for (idx_t id_idx = 0; id_idx < identity_cols.size(); id_idx++) {
-						if (col_name == identity_cols[id_idx]) {
-							auto capture_idx = parser.pattern().capture_index(col_name);
-							if (capture_idx >= 0 &&
-							    static_cast<size_t>(capture_idx) < lstate.current_identity->size()) {
-								output.data[i].SetValue(
-								    count, StringToTypedValue((*lstate.current_identity)[capture_idx], col.Type()));
-							} else {
-								output.data[i].SetValue(count, Value());
-							}
-							found = true;
-							break;
-						}
-					}
-
-					if (!found) {
-						// Attr column
-						auto it = lstate.current_attrs.find(col_name);
-						if (it != lstate.current_attrs.end()) {
-							output.data[i].SetValue(count, StringToTypedValue(it->second, col.Type()));
-						} else {
-							output.data[i].SetValue(count, Value());
-						}
-					}
-				}
+				EmitPivotRow(lstate, output, count);
 				count++;
 
 				// Start next row
@@ -275,14 +266,7 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 
 				// Accumulate the current key's attr into the new row
 				std::string attr_str(attr_name);
-				bool is_known_attr = false;
-				for (auto &ac : attr_cols) {
-					if (ac == attr_str) {
-						is_known_attr = true;
-						break;
-					}
-				}
-				if (is_known_attr) {
+				if (lstate.known_attrs.count(attr_str)) {
 					lstate.current_attrs[attr_str] = std::string(lstate.iterator->value_view());
 				}
 				lstate.iterator->next();
@@ -290,16 +274,8 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 			}
 
 			// Same identity - accumulate attr
-			std::string_view attr_name = parsed->attr_name;
-			std::string attr_str(attr_name);
-			bool is_known_attr = false;
-			for (auto &ac : attr_cols) {
-				if (ac == attr_str) {
-					is_known_attr = true;
-					break;
-				}
-			}
-			if (is_known_attr) {
+			std::string attr_str(parsed->attr_name);
+			if (lstate.known_attrs.count(attr_str)) {
 				lstate.current_attrs[attr_str] = std::string(lstate.iterator->value_view());
 			}
 			lstate.iterator->next();
@@ -307,38 +283,7 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 
 		// If iterator exhausted or past prefix, emit remaining accumulated row
 		if (lstate.current_identity.has_value() && need_more_keys) {
-			for (idx_t i = 0; i < column_ids.size(); i++) {
-				auto col_idx = column_ids[i];
-				if (col_idx == COLUMN_IDENTIFIER_ROW_ID) {
-					continue;
-				}
-				auto &col = columns.GetColumn(LogicalIndex(col_idx));
-				auto &col_name = col.Name();
-
-				bool found = false;
-				for (idx_t id_idx = 0; id_idx < identity_cols.size(); id_idx++) {
-					if (col_name == identity_cols[id_idx]) {
-						auto capture_idx = parser.pattern().capture_index(col_name);
-						if (capture_idx >= 0 && static_cast<size_t>(capture_idx) < lstate.current_identity->size()) {
-							output.data[i].SetValue(
-							    count, StringToTypedValue((*lstate.current_identity)[capture_idx], col.Type()));
-						} else {
-							output.data[i].SetValue(count, Value());
-						}
-						found = true;
-						break;
-					}
-				}
-
-				if (!found) {
-					auto it = lstate.current_attrs.find(col_name);
-					if (it != lstate.current_attrs.end()) {
-						output.data[i].SetValue(count, StringToTypedValue(it->second, col.Type()));
-					} else {
-						output.data[i].SetValue(count, Value());
-					}
-				}
-			}
+			EmitPivotRow(lstate, output, count);
 			count++;
 			lstate.current_identity.reset();
 			lstate.current_attrs.clear();

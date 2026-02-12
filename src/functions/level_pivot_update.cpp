@@ -1,5 +1,6 @@
 #include "level_pivot_update.hpp"
 #include "level_pivot_table_entry.hpp"
+#include "level_pivot_utils.hpp"
 #include "key_parser.hpp"
 #include "level_pivot_storage.hpp"
 
@@ -40,11 +41,7 @@ SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chun
 
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			// Extract identity from row_id columns (at end of chunk)
-			std::vector<std::string> identity_values;
-			for (idx_t i = 0; i < num_row_id_cols; i++) {
-				auto val = chunk.data[row_id_offset + i].GetValue(row);
-				identity_values.push_back(val.IsNull() ? "" : val.ToString());
-			}
+			auto identity_values = ExtractIdentityValues(chunk, row, row_id_offset, num_row_id_cols);
 
 			// Process each updated column (at beginning of chunk)
 			for (idx_t i = 0; i < num_update_cols; i++) {

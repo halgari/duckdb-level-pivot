@@ -258,6 +258,12 @@ CALL level_pivot_create_table('testdb', 'bad_raw', NULL, ['a', 'b', 'c'], table_
 ----
 Raw tables must have exactly 2 columns
 
+# Invalid table_mode should error
+statement error
+CALL level_pivot_create_table('testdb', 'bad', 'bad##{k}##{attr}', ['k', 'v'], table_mode := 'invalid');
+----
+Invalid table_mode
+
 # ===== Typed column tests =====
 
 # Create a typed pivot table with BIGINT and DOUBLE columns

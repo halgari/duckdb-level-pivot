@@ -60,6 +60,10 @@ static unique_ptr<FunctionData> CreateTableBind(ClientContext &context, TableFun
 		data->table_mode = it->second.GetValue<string>();
 	}
 
+	if (data->table_mode != "pivot" && data->table_mode != "raw") {
+		throw InvalidInputException("Invalid table_mode '%s'. Must be 'pivot' or 'raw'.", data->table_mode);
+	}
+
 	// Return type: single boolean column
 	return_types.push_back(LogicalType::BOOLEAN);
 	names.push_back("success");

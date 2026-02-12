@@ -1,5 +1,6 @@
 #include "level_pivot_delete.hpp"
 #include "level_pivot_table_entry.hpp"
+#include "level_pivot_utils.hpp"
 #include "key_parser.hpp"
 #include "level_pivot_storage.hpp"
 
@@ -26,19 +27,14 @@ SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chun
 	if (lp_table.GetTableMode() == LevelPivotTableMode::PIVOT) {
 		auto &parser = lp_table.GetKeyParser();
 		auto batch = connection.create_batch();
+		auto iter = connection.iterator();
 
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			// The child plan emits the identity columns (from GetRowIdColumns)
-			// Extract identity values from the incoming chunk
-			std::vector<std::string> identity_values;
-			for (idx_t col = 0; col < chunk.ColumnCount(); col++) {
-				auto val = chunk.data[col].GetValue(row);
-				identity_values.push_back(val.IsNull() ? "" : val.ToString());
-			}
+			auto identity_values = ExtractIdentityValues(chunk, row, 0, chunk.ColumnCount());
 
 			// Find all keys matching this identity and delete them
 			std::string prefix = parser.build_prefix(identity_values);
-			auto iter = connection.iterator();
 			if (prefix.empty()) {
 				iter.seek_to_first();
 			} else {
@@ -47,28 +43,13 @@ SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chun
 
 			while (iter.valid()) {
 				std::string_view key_sv = iter.key_view();
-				if (!prefix.empty() && (key_sv.size() < prefix.size() || key_sv.substr(0, prefix.size()) != prefix)) {
+				if (!IsWithinPrefix(key_sv, prefix)) {
 					break;
 				}
 
 				auto parsed = parser.parse_view(key_sv);
-				if (parsed) {
-					// Verify identity matches
-					bool matches = true;
-					if (parsed->capture_values.size() == identity_values.size()) {
-						for (size_t i = 0; i < identity_values.size(); i++) {
-							if (parsed->capture_values[i] != identity_values[i]) {
-								matches = false;
-								break;
-							}
-						}
-					} else {
-						matches = false;
-					}
-
-					if (matches) {
-						batch.del(std::string(key_sv));
-					}
+				if (parsed && IdentityMatches(identity_values, parsed->capture_values)) {
+					batch.del(std::string(key_sv));
 				}
 				iter.next();
 			}
