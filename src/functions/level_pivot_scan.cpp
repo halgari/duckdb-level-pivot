@@ -149,15 +149,19 @@ static unique_ptr<LocalTableFunctionState> LevelPivotInitLocal(ExecutionContext 
 }
 
 static void EmitPivotRow(LevelPivotScanLocalState &lstate, DataChunk &output, idx_t row_idx) {
+	if (!lstate.current_identity.has_value()) {
+		return;
+	}
+	auto &identity = *lstate.current_identity;
 	for (idx_t i = 0; i < lstate.column_map.size(); i++) {
 		auto &mapping = lstate.column_map[i];
 		if (mapping.role == ColumnMapping::ROW_ID) {
 			continue;
 		}
 		if (mapping.role == ColumnMapping::IDENTITY) {
-			if (mapping.capture_index < lstate.current_identity->size()) {
+			if (mapping.capture_index < identity.size()) {
 				output.data[i].SetValue(
-				    row_idx, StringToTypedValue((*lstate.current_identity)[mapping.capture_index], mapping.type));
+				    row_idx, StringToTypedValue(identity[mapping.capture_index], mapping.type));
 			} else {
 				output.data[i].SetValue(row_idx, Value());
 			}
