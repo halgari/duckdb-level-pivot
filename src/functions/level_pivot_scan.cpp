@@ -9,33 +9,47 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include <unordered_set>
+#include <algorithm>
 
 namespace duckdb {
 
 LevelPivotScanGlobalState::LevelPivotScanGlobalState() : done(false) {
 }
 
-struct ColumnMapping {
-	enum Role { IDENTITY, ATTR, ROW_ID };
-	Role role;
-	idx_t capture_index; // for IDENTITY: index into identity values
-	std::string name;    // column name (for ATTR lookup)
+// Mapping from attr name to output column index (sorted by name to match LevelDB order)
+struct AttrMapping {
+	std::string name;
+	idx_t output_col;
+	LogicalType type;
+};
+
+// Mapping from capture index to output column index
+struct IdentityMapping {
+	idx_t capture_index;
+	idx_t output_col;
 	LogicalType type;
 };
 
 struct LevelPivotScanLocalState : public LocalTableFunctionState {
-	// Pivot mode state
 	std::unique_ptr<level_pivot::LevelDBIterator> iterator;
 	std::string prefix;
 	bool initialized = false;
 
-	// Current row accumulation (pivot mode)
-	std::optional<std::vector<std::string>> current_identity;
-	std::unordered_map<std::string, std::string> current_attrs;
+	// Zero-alloc parse buffers (reused every key)
+	std::string_view captures_buf[16];
+	std::string_view attr_sv;
 
-	// Pre-computed column mapping (built once per scan init)
-	std::vector<ColumnMapping> column_map;
-	std::unordered_set<std::string> known_attrs;
+	// Reusable identity buffer (assign() reuses string capacity after first row)
+	std::vector<std::string> current_identity;
+	bool has_identity = false;
+	size_t num_captures = 0;
+
+	// Column lookup tables (built once at init)
+	std::vector<AttrMapping> attr_mappings;       // sorted by name to match LevelDB order
+	std::vector<IdentityMapping> identity_mappings;
+
+	// Per-row NULL tracking (one flag per attr column)
+	std::vector<bool> attr_written;
 
 	// Raw mode state
 	bool raw_done = false;
@@ -148,31 +162,39 @@ static unique_ptr<LocalTableFunctionState> LevelPivotInitLocal(ExecutionContext 
 	return make_uniq<LevelPivotScanLocalState>();
 }
 
-static void EmitPivotRow(LevelPivotScanLocalState &lstate, DataChunk &output, idx_t row_idx) {
-	if (!lstate.current_identity.has_value()) {
-		return;
+// Write a string_view directly into a DuckDB output vector (bypasses Value allocation for VARCHAR)
+static inline void WriteStringDirect(Vector &vec, idx_t row, std::string_view sv) {
+	FlatVector::GetData<string_t>(vec)[row] = StringVector::AddString(vec, sv.data(), sv.size());
+}
+
+static inline void WriteValueDirect(Vector &vec, idx_t row, std::string_view sv, const LogicalType &type) {
+	if (type.id() == LogicalTypeId::VARCHAR) {
+		WriteStringDirect(vec, row, sv);
+	} else {
+		vec.SetValue(row, StringToTypedValue(std::string(sv), type));
 	}
-	auto &identity = *lstate.current_identity;
-	for (idx_t i = 0; i < lstate.column_map.size(); i++) {
-		auto &mapping = lstate.column_map[i];
-		if (mapping.role == ColumnMapping::ROW_ID) {
-			continue;
+}
+
+// Compare captures_buf against current_identity. Returns true if they match.
+static inline bool IdentityMatchesFast(const std::vector<std::string> &identity,
+                                       const std::string_view *captures, size_t count) {
+	if (identity.size() != count) {
+		return false;
+	}
+	for (size_t i = 0; i < count; ++i) {
+		if (identity[i] != captures[i]) {
+			return false;
 		}
-		if (mapping.role == ColumnMapping::IDENTITY) {
-			if (mapping.capture_index < identity.size()) {
-				output.data[i].SetValue(row_idx, StringToTypedValue(identity[mapping.capture_index], mapping.type));
-			} else {
-				output.data[i].SetValue(row_idx, Value());
-			}
-		} else {
-			// ATTR
-			auto it = lstate.current_attrs.find(mapping.name);
-			if (it != lstate.current_attrs.end()) {
-				output.data[i].SetValue(row_idx, StringToTypedValue(it->second, mapping.type));
-			} else {
-				output.data[i].SetValue(row_idx, Value());
-			}
-		}
+	}
+	return true;
+}
+
+// Update identity from captures, reusing string buffer capacity
+static inline void UpdateIdentity(std::vector<std::string> &identity,
+                                  const std::string_view *captures, size_t count) {
+	identity.resize(count);
+	for (size_t i = 0; i < count; ++i) {
+		identity[i].assign(captures[i].data(), captures[i].size());
 	}
 }
 
@@ -192,112 +214,148 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 			lstate.iterator->seek(lstate.prefix);
 		}
 
-		// Pre-compute column mapping and known attrs set
+		lstate.num_captures = parser.pattern().capture_count();
+
+		// Build projection-aware column mappings
 		auto &identity_cols = table_entry.GetIdentityColumns();
 		auto &attr_cols = table_entry.GetAttrColumns();
 		std::unordered_set<std::string> identity_set(identity_cols.begin(), identity_cols.end());
+		std::unordered_set<std::string> attr_set(attr_cols.begin(), attr_cols.end());
 
-		lstate.column_map.resize(column_ids.size());
 		for (idx_t i = 0; i < column_ids.size(); i++) {
 			auto col_idx = column_ids[i];
 			if (col_idx == COLUMN_IDENTIFIER_ROW_ID) {
-				lstate.column_map[i].role = ColumnMapping::ROW_ID;
 				continue;
 			}
 			auto &col = columns.GetColumn(LogicalIndex(col_idx));
 			auto &col_name = col.Name();
-			lstate.column_map[i].name = col_name;
-			lstate.column_map[i].type = col.Type();
 
 			if (identity_set.count(col_name)) {
-				lstate.column_map[i].role = ColumnMapping::IDENTITY;
 				auto capture_idx = parser.pattern().capture_index(col_name);
-				lstate.column_map[i].capture_index = capture_idx >= 0 ? static_cast<idx_t>(capture_idx) : 0;
-			} else {
-				lstate.column_map[i].role = ColumnMapping::ATTR;
+				IdentityMapping im;
+				im.capture_index = capture_idx >= 0 ? static_cast<idx_t>(capture_idx) : 0;
+				im.output_col = i;
+				im.type = col.Type();
+				lstate.identity_mappings.push_back(std::move(im));
+			} else if (attr_set.count(col_name)) {
+				AttrMapping am;
+				am.name = col_name;
+				am.output_col = i;
+				am.type = col.Type();
+				lstate.attr_mappings.push_back(std::move(am));
 			}
 		}
 
-		lstate.known_attrs = std::unordered_set<std::string>(attr_cols.begin(), attr_cols.end());
+		// Sort attr_mappings by name to match LevelDB's sorted key order
+		std::sort(lstate.attr_mappings.begin(), lstate.attr_mappings.end(),
+		          [](const AttrMapping &a, const AttrMapping &b) { return a.name < b.name; });
+
+		lstate.attr_written.resize(lstate.attr_mappings.size(), false);
 		lstate.initialized = true;
 	}
 
+	auto num_captures = lstate.num_captures;
+	auto &attr_mappings = lstate.attr_mappings;
+	auto num_attrs = attr_mappings.size();
+
 	idx_t count = 0;
-	while (count < STANDARD_VECTOR_SIZE) {
-		// Try to complete a row from accumulated state
-		bool need_more_keys = true;
+	while (lstate.iterator && lstate.iterator->valid()) {
+		std::string_view key_sv = lstate.iterator->key_view();
 
-		while (need_more_keys && lstate.iterator && lstate.iterator->valid()) {
-			std::string_view key_sv = lstate.iterator->key_view();
-
-			if (!IsWithinPrefix(key_sv, lstate.prefix)) {
-				// Past prefix - if we have accumulated identity, fall through to
-				// the post-loop emission code (need_more_keys stays true).
-				// If no identity, we're just done.
-				if (!lstate.current_identity.has_value()) {
-					gstate.done = true;
-					output.SetCardinality(count);
-					return;
-				}
+		if (!IsWithinPrefix(key_sv, lstate.prefix)) {
+			if (!lstate.has_identity) {
+				gstate.done = true;
 				break;
 			}
-
-			auto parsed = parser.parse_view(key_sv);
-			if (!parsed) {
-				lstate.iterator->next();
-				continue;
-			}
-
-			if (!lstate.current_identity.has_value()) {
-				// First key - start new row
-				lstate.current_identity = MaterializeIdentity(parsed->capture_values);
-				lstate.current_attrs.clear();
-			} else if (!IdentityMatches(*lstate.current_identity, parsed->capture_values)) {
-				// Identity changed - emit the completed row
-				need_more_keys = false;
-
-				// Don't lose this key's attr - save state for next row
-				auto new_identity = MaterializeIdentity(parsed->capture_values);
-				std::string_view attr_name = parsed->attr_name;
-
-				EmitPivotRow(lstate, output, count);
-				count++;
-
-				// Start next row
-				lstate.current_identity = std::move(new_identity);
-				lstate.current_attrs.clear();
-
-				// Accumulate the current key's attr into the new row
-				std::string attr_str(attr_name);
-				if (lstate.known_attrs.count(attr_str)) {
-					lstate.current_attrs[attr_str] = std::string(lstate.iterator->value_view());
+			// Finalize last row: set NULLs for unwritten attrs
+			for (size_t a = 0; a < num_attrs; ++a) {
+				if (!lstate.attr_written[a]) {
+					FlatVector::SetNull(output.data[attr_mappings[a].output_col], count, true);
 				}
-				lstate.iterator->next();
-				continue;
 			}
-
-			// Same identity - accumulate attr
-			std::string attr_str(parsed->attr_name);
-			if (lstate.known_attrs.count(attr_str)) {
-				lstate.current_attrs[attr_str] = std::string(lstate.iterator->value_view());
-			}
-			lstate.iterator->next();
-		}
-
-		// If iterator exhausted or past prefix, emit remaining accumulated row
-		if (lstate.current_identity.has_value() && need_more_keys) {
-			EmitPivotRow(lstate, output, count);
 			count++;
-			lstate.current_identity.reset();
-			lstate.current_attrs.clear();
+			lstate.has_identity = false;
 			gstate.done = true;
 			break;
 		}
 
-		if (!lstate.iterator || !lstate.iterator->valid()) {
-			gstate.done = true;
-			break;
+		// Parse key with zero-alloc fast path
+		if (!parser.parse_fast(key_sv, lstate.captures_buf, lstate.attr_sv)) {
+			lstate.iterator->next();
+			continue;
 		}
+
+		if (!lstate.has_identity) {
+			// First key - start new row
+			UpdateIdentity(lstate.current_identity, lstate.captures_buf, num_captures);
+			lstate.has_identity = true;
+			std::fill(lstate.attr_written.begin(), lstate.attr_written.end(), false);
+
+			// Write identity columns directly
+			for (auto &im : lstate.identity_mappings) {
+				WriteValueDirect(output.data[im.output_col], count, lstate.captures_buf[im.capture_index], im.type);
+			}
+		} else if (!IdentityMatchesFast(lstate.current_identity, lstate.captures_buf, num_captures)) {
+			// Identity changed - finalize previous row
+			for (size_t a = 0; a < num_attrs; ++a) {
+				if (!lstate.attr_written[a]) {
+					FlatVector::SetNull(output.data[attr_mappings[a].output_col], count, true);
+				}
+			}
+			count++;
+
+			if (count >= STANDARD_VECTOR_SIZE) {
+				// Chunk full - save new identity for next chunk
+				UpdateIdentity(lstate.current_identity, lstate.captures_buf, num_captures);
+				std::fill(lstate.attr_written.begin(), lstate.attr_written.end(), false);
+
+				// Write identity columns for next row (will be row 0 of next chunk)
+				// Actually, we need to NOT advance the iterator, so the next call picks up here.
+				// But we already parsed this key. We need to write this key's data into the next chunk.
+				// Solution: don't advance iterator, set identity, and return.
+				// The next call to PivotScan will re-parse this key and handle it.
+				lstate.has_identity = false;
+				output.SetCardinality(count);
+				return;
+			}
+
+			// Start new row
+			UpdateIdentity(lstate.current_identity, lstate.captures_buf, num_captures);
+			std::fill(lstate.attr_written.begin(), lstate.attr_written.end(), false);
+
+			// Write identity columns directly
+			for (auto &im : lstate.identity_mappings) {
+				WriteValueDirect(output.data[im.output_col], count, lstate.captures_buf[im.capture_index], im.type);
+			}
+		}
+
+		// Find attr in sorted attr_mappings (linear scan, typically 2-5 entries)
+		for (size_t a = 0; a < num_attrs; ++a) {
+			if (attr_mappings[a].name == lstate.attr_sv) {
+				std::string_view val_sv = lstate.iterator->value_view();
+				WriteValueDirect(output.data[attr_mappings[a].output_col], count, val_sv, attr_mappings[a].type);
+				lstate.attr_written[a] = true;
+				break;
+			}
+		}
+
+		lstate.iterator->next();
+	}
+
+	// Iterator exhausted - finalize last row if any
+	if (lstate.has_identity) {
+		for (size_t a = 0; a < num_attrs; ++a) {
+			if (!lstate.attr_written[a]) {
+				FlatVector::SetNull(output.data[attr_mappings[a].output_col], count, true);
+			}
+		}
+		count++;
+		lstate.has_identity = false;
+		gstate.done = true;
+	}
+
+	if (!lstate.iterator || !lstate.iterator->valid()) {
+		gstate.done = true;
 	}
 
 	output.SetCardinality(count);

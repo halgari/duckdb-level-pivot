@@ -5,10 +5,12 @@ namespace level_pivot {
 
 KeyParser::KeyParser(const KeyPattern &pattern) : pattern_(pattern) {
 	compute_estimated_key_size();
+	try_init_simd_parser();
 }
 
 KeyParser::KeyParser(const std::string &pattern) : pattern_(pattern) {
 	compute_estimated_key_size();
+	try_init_simd_parser();
 }
 
 void KeyParser::compute_estimated_key_size() {
@@ -124,7 +126,37 @@ std::optional<ParsedKey> KeyParser::parse(const std::string &key) const {
 }
 
 std::optional<ParsedKeyView> KeyParser::parse_view(std::string_view key) const {
+	if (simd_parser_) {
+		std::string_view captures[16];
+		std::string_view attr;
+		if (simd_parser_->parse_fast(key, captures, attr)) {
+			ParsedKeyView result;
+			result.capture_values.reserve(pattern_.capture_count());
+			for (size_t i = 0; i < pattern_.capture_count(); ++i) {
+				result.capture_values.push_back(captures[i]);
+			}
+			result.attr_name = attr;
+			return result;
+		}
+		return std::nullopt;
+	}
 	return parse_impl<ParsedKeyView>(pattern_, key);
+}
+
+bool KeyParser::parse_fast(std::string_view key, std::string_view *captures, std::string_view &attr) const {
+	if (simd_parser_) {
+		return simd_parser_->parse_fast(key, captures, attr);
+	}
+	// Fallback: use generic parse_impl and copy results
+	auto result = parse_impl<ParsedKeyView>(pattern_, key);
+	if (!result) {
+		return false;
+	}
+	for (size_t i = 0; i < result->capture_values.size(); ++i) {
+		captures[i] = result->capture_values[i];
+	}
+	attr = result->attr_name;
+	return true;
 }
 
 std::string KeyParser::build(const std::vector<std::string> &capture_values, const std::string &attr_name) const {
@@ -207,6 +239,59 @@ bool KeyParser::starts_with_prefix(const std::string &key) const {
 		return false;
 	}
 	return key.compare(0, prefix.size(), prefix) == 0;
+}
+
+std::optional<std::string> KeyParser::try_get_uniform_delimiter() const {
+	std::string delimiter;
+	bool first_literal = true;
+
+	for (size_t i = 0; i < pattern_.segments().size(); ++i) {
+		const auto &seg = pattern_.segments()[i];
+
+		if (std::holds_alternative<LiteralSegment>(seg)) {
+			const auto &lit = std::get<LiteralSegment>(seg).text;
+
+			// Skip the prefix - it's not a delimiter between captures
+			if (first_literal && i == 0) {
+				first_literal = false;
+				continue;
+			}
+
+			if (delimiter.empty()) {
+				delimiter = lit;
+			} else if (delimiter != lit) {
+				return std::nullopt;
+			}
+		} else {
+			if (first_literal) {
+				first_literal = false;
+			}
+		}
+	}
+
+	return delimiter.empty() ? std::nullopt : std::optional<std::string>(delimiter);
+}
+
+void KeyParser::try_init_simd_parser() {
+	auto uniform_delim = try_get_uniform_delimiter();
+	if (!uniform_delim) {
+		return;
+	}
+
+	// Store owned copies - SIMD parser needs stable string_views
+	simd_delimiter_ = *uniform_delim;
+	simd_prefix_ = pattern_.literal_prefix();
+
+	// The literal_prefix includes the trailing delimiter (e.g., "users##" for
+	// pattern "users##{group}##..."). Strip it because the SIMD parser expects
+	// the first delimiter to appear immediately after the prefix.
+	if (simd_prefix_.size() >= simd_delimiter_.size() &&
+	    simd_prefix_.compare(simd_prefix_.size() - simd_delimiter_.size(), simd_delimiter_.size(),
+	                         simd_delimiter_) == 0) {
+		simd_prefix_.resize(simd_prefix_.size() - simd_delimiter_.size());
+	}
+
+	simd_parser_ = std::make_unique<SimdKeyParser>(simd_prefix_, simd_delimiter_, pattern_.capture_count());
 }
 
 } // namespace level_pivot

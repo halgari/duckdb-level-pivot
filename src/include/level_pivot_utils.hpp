@@ -37,15 +37,6 @@ inline bool IdentityMatches(const std::vector<std::string> &identity, const std:
 	return true;
 }
 
-inline std::vector<std::string> MaterializeIdentity(const std::vector<std::string_view> &views) {
-	std::vector<std::string> result;
-	result.reserve(views.size());
-	for (const auto &sv : views) {
-		result.emplace_back(sv);
-	}
-	return result;
-}
-
 inline std::vector<std::string> ExtractIdentityValues(DataChunk &chunk, idx_t row, idx_t col_offset, idx_t num_cols) {
 	std::vector<std::string> identity_values;
 	identity_values.reserve(num_cols);
