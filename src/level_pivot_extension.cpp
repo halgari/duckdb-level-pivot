@@ -67,9 +67,8 @@ template <typename SE, typename = void>
 struct has_se_register : std::false_type {};
 
 template <typename SE>
-struct has_se_register<SE, std::void_t<decltype(
-    SE::Register(std::declval<DBConfig&>(), std::declval<const string&>(),
-                 std::declval<shared_ptr<SE>>()))>> : std::true_type {};
+struct has_se_register<SE, std::void_t<decltype(SE::Register(std::declval<DBConfig &>(), std::declval<const string &>(),
+                                                             std::declval<shared_ptr<SE>>()))>> : std::true_type {};
 
 template <typename SE = StorageExtension, std::enable_if_t<has_se_register<SE>::value, int> = 0>
 static void RegisterStorageExt(DBConfig &config, unique_ptr<StorageExtension> ext) {
