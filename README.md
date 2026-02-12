@@ -10,7 +10,7 @@ INSTALL level_pivot FROM 'https://halgari.github.io/duckdb-level-pivot/current_r
 LOAD level_pivot;
 ```
 
-Requires DuckDB v1.4.4. The extension is not yet in the DuckDB community registry, so `allow_unsigned_extensions` is required.
+Requires DuckDB v1.4.4. The extension is not yet in the DuckDB community registry, so `allow_unsigned_extensions` is required. The `httpfs` extension is also needed for the remote install — most DuckDB builds autoload it, but if you get a "requires httpfs" error, run `INSTALL httpfs; LOAD httpfs;` first.
 
 To update to a newer version:
 
