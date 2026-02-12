@@ -98,8 +98,8 @@ void KeyPattern::validate() const {
 	}
 
 	if (capture_names_.size() > MAX_KEY_CAPTURES) {
-		throw KeyPatternError("Pattern has " + std::to_string(capture_names_.size()) +
-		                      " captures, max is " + std::to_string(MAX_KEY_CAPTURES));
+		throw KeyPatternError("Pattern has " + std::to_string(capture_names_.size()) + " captures, max is " +
+		                      std::to_string(MAX_KEY_CAPTURES));
 	}
 
 	for (size_t i = 0; i + 1 < segments_.size(); ++i) {

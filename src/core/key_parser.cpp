@@ -260,8 +260,8 @@ void KeyParser::try_init_simd_parser() {
 	// pattern "users##{group}##..."). Strip it because the SIMD parser expects
 	// the first delimiter to appear immediately after the prefix.
 	if (simd_prefix_.size() >= simd_delimiter_.size() &&
-	    simd_prefix_.compare(simd_prefix_.size() - simd_delimiter_.size(), simd_delimiter_.size(),
-	                         simd_delimiter_) == 0) {
+	    simd_prefix_.compare(simd_prefix_.size() - simd_delimiter_.size(), simd_delimiter_.size(), simd_delimiter_) ==
+	        0) {
 		simd_prefix_.resize(simd_prefix_.size() - simd_delimiter_.size());
 	}
 

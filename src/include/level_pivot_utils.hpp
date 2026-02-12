@@ -25,8 +25,7 @@ inline bool IsWithinPrefix(std::string_view key, std::string_view prefix) {
 	return key.compare(0, prefix.size(), prefix.data(), prefix.size()) == 0;
 }
 
-inline bool IdentityMatches(const std::vector<std::string> &identity,
-                            const std::string_view *captures, size_t count) {
+inline bool IdentityMatches(const std::vector<std::string> &identity, const std::string_view *captures, size_t count) {
 	if (identity.size() != count) {
 		return false;
 	}

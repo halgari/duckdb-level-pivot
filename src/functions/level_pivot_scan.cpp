@@ -44,12 +44,11 @@ struct LevelPivotScanLocalState : public LocalTableFunctionState {
 	size_t num_captures = 0;
 
 	// Column lookup tables (built once at init)
-	std::vector<AttrMapping> attr_mappings;       // sorted by name to match LevelDB order
+	std::vector<AttrMapping> attr_mappings; // sorted by name to match LevelDB order
 	std::vector<IdentityMapping> identity_mappings;
 
 	// Per-row NULL tracking (one flag per attr column)
 	std::vector<bool> attr_written;
-
 };
 
 static unique_ptr<FunctionData> LevelPivotBind(ClientContext &context, TableFunctionBindInput &input,
@@ -173,8 +172,7 @@ static inline void WriteValueDirect(Vector &vec, idx_t row, std::string_view sv,
 }
 
 // Update identity from captures, reusing string buffer capacity
-static inline void UpdateIdentity(std::vector<std::string> &identity,
-                                  const std::string_view *captures, size_t count) {
+static inline void UpdateIdentity(std::vector<std::string> &identity, const std::string_view *captures, size_t count) {
 	identity.resize(count);
 	for (size_t i = 0; i < count; ++i) {
 		identity[i].assign(captures[i].data(), captures[i].size());

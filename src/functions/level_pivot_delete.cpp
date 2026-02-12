@@ -45,7 +45,8 @@ SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chun
 				}
 
 				auto parsed = parser.parse_view(key_sv);
-				if (parsed && IdentityMatches(identity_values, parsed->capture_values.data(), parsed->capture_values.size())) {
+				if (parsed &&
+				    IdentityMatches(identity_values, parsed->capture_values.data(), parsed->capture_values.size())) {
 					batch.del(key_sv);
 					ctx.txn.CheckKeyAgainstTables(key_sv, ctx.schema);
 				}

@@ -176,8 +176,8 @@ void LevelDBConnection::put(std::string_view key, std::string_view value) {
 	check_write_allowed();
 	leveldb::WriteOptions options;
 	options.sync = false;
-	leveldb::Status status = db_->Put(options, leveldb::Slice(key.data(), key.size()),
-	                                  leveldb::Slice(value.data(), value.size()));
+	leveldb::Status status =
+	    db_->Put(options, leveldb::Slice(key.data(), key.size()), leveldb::Slice(value.data(), value.size()));
 	if (!status.ok()) {
 		throw LevelDBError("Put failed for key '" + std::string(key) + "': " + status.ToString());
 	}
