@@ -25,7 +25,7 @@ void KeyParser::compute_estimated_key_size() {
 	}
 }
 
-bool KeyParser::matches(const std::string &key) const {
+bool KeyParser::matches(std::string_view key) const {
 	return parse(key).has_value();
 }
 
@@ -121,7 +121,7 @@ std::optional<ResultType> parse_impl(const KeyPattern &pattern, std::string_view
 
 } // anonymous namespace
 
-std::optional<ParsedKey> KeyParser::parse(const std::string &key) const {
+std::optional<ParsedKey> KeyParser::parse(std::string_view key) const {
 	return parse_impl<ParsedKey>(pattern_, key);
 }
 
@@ -233,12 +233,12 @@ std::string KeyParser::build_prefix(const std::vector<std::string> &capture_valu
 	return result;
 }
 
-bool KeyParser::starts_with_prefix(const std::string &key) const {
+bool KeyParser::starts_with_prefix(std::string_view key) const {
 	const auto &prefix = pattern_.literal_prefix();
 	if (key.size() < prefix.size()) {
 		return false;
 	}
-	return key.compare(0, prefix.size(), prefix) == 0;
+	return key.compare(0, prefix.size(), prefix.data(), prefix.size()) == 0;
 }
 
 std::optional<std::string> KeyParser::try_get_uniform_delimiter() const {

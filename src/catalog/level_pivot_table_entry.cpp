@@ -14,6 +14,7 @@ LevelPivotTableEntry::LevelPivotTableEntry(Catalog &catalog, SchemaCatalogEntry 
     : TableCatalogEntry(catalog, schema, info), mode_(LevelPivotTableMode::PIVOT), connection_(std::move(connection)),
       parser_(std::move(parser)), identity_columns_(std::move(identity_columns)),
       attr_columns_(std::move(attr_columns)) {
+	BuildColumnIndexCache();
 }
 
 // Raw mode constructor
@@ -24,14 +25,19 @@ LevelPivotTableEntry::LevelPivotTableEntry(Catalog &catalog, SchemaCatalogEntry 
 	if (info.columns.LogicalColumnCount() >= 1) {
 		identity_columns_.push_back(info.columns.GetColumn(LogicalIndex(0)).Name());
 	}
+	BuildColumnIndexCache();
+}
+
+void LevelPivotTableEntry::BuildColumnIndexCache() {
+	for (auto &col : GetColumns().Logical()) {
+		col_name_to_index_[col.Name()] = col.Logical().index;
+	}
 }
 
 idx_t LevelPivotTableEntry::GetColumnIndex(const string &col_name) const {
-	auto &cols = GetColumns();
-	for (auto &col : cols.Logical()) {
-		if (col.Name() == col_name) {
-			return col.Logical().index;
-		}
+	auto it = col_name_to_index_.find(col_name);
+	if (it != col_name_to_index_.end()) {
+		return it->second;
 	}
 	throw InternalException("Column '%s' not found in table '%s'", col_name, name);
 }
@@ -58,12 +64,9 @@ vector<column_t> LevelPivotTableEntry::GetRowIdColumns() const {
 	if (mode_ == LevelPivotTableMode::PIVOT) {
 		// Return identity column indices as row identifiers
 		for (auto &id_col : identity_columns_) {
-			auto &cols = GetColumns();
-			for (auto &col : cols.Logical()) {
-				if (col.Name() == id_col) {
-					result.push_back(col.Logical().index);
-					break;
-				}
+			auto it = col_name_to_index_.find(id_col);
+			if (it != col_name_to_index_.end()) {
+				result.push_back(it->second);
 			}
 		}
 	} else {
@@ -80,12 +83,10 @@ virtual_column_map_t LevelPivotTableEntry::GetVirtualColumns() const {
 	// Add identity columns as virtual columns so BindRowIdColumns can find them
 	if (mode_ == LevelPivotTableMode::PIVOT) {
 		for (auto &id_col : identity_columns_) {
-			auto &cols = GetColumns();
-			for (auto &col : cols.Logical()) {
-				if (col.Name() == id_col) {
-					result.insert(make_pair(col.Logical().index, TableColumn(col.Name(), col.Type())));
-					break;
-				}
+			auto it = col_name_to_index_.find(id_col);
+			if (it != col_name_to_index_.end()) {
+				auto &col = GetColumns().GetColumn(LogicalIndex(it->second));
+				result.insert(make_pair(it->second, TableColumn(col.Name(), col.Type())));
 			}
 		}
 	} else {

@@ -48,8 +48,8 @@ public:
 		return pattern_;
 	}
 
-	bool matches(const std::string &key) const;
-	std::optional<ParsedKey> parse(const std::string &key) const;
+	bool matches(std::string_view key) const;
+	std::optional<ParsedKey> parse(std::string_view key) const;
 	std::optional<ParsedKeyView> parse_view(std::string_view key) const;
 
 	// Zero-alloc parse into pre-allocated buffers. Returns false if key doesn't match.
@@ -61,7 +61,7 @@ public:
 
 	std::string build_prefix() const;
 	std::string build_prefix(const std::vector<std::string> &capture_values) const;
-	bool starts_with_prefix(const std::string &key) const;
+	bool starts_with_prefix(std::string_view key) const;
 
 private:
 	KeyPattern pattern_;

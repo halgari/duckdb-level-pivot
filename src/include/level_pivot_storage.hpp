@@ -38,7 +38,7 @@ public:
 	LevelDBIterator(const LevelDBIterator &) = delete;
 	LevelDBIterator &operator=(const LevelDBIterator &) = delete;
 
-	void seek(const std::string &key);
+	void seek(std::string_view key);
 	void seek_to_first();
 	void next();
 	bool valid() const;
@@ -63,8 +63,8 @@ public:
 	LevelDBWriteBatch(const LevelDBWriteBatch &) = delete;
 	LevelDBWriteBatch &operator=(const LevelDBWriteBatch &) = delete;
 
-	void put(const std::string &key, const std::string &value);
-	void del(const std::string &key);
+	void put(std::string_view key, std::string_view value);
+	void del(std::string_view key);
 	void commit();
 	void discard();
 	size_t pending_count() const;
@@ -85,9 +85,9 @@ public:
 	LevelDBConnection(const LevelDBConnection &) = delete;
 	LevelDBConnection &operator=(const LevelDBConnection &) = delete;
 
-	std::optional<std::string> get(const std::string &key);
-	void put(const std::string &key, const std::string &value);
-	void del(const std::string &key);
+	std::optional<std::string> get(std::string_view key);
+	void put(std::string_view key, std::string_view value);
+	void del(std::string_view key);
 	LevelDBIterator iterator();
 	LevelDBWriteBatch create_batch();
 

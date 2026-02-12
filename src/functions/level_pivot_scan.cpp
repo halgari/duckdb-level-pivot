@@ -8,7 +8,6 @@
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
-#include <unordered_set>
 #include <algorithm>
 
 namespace duckdb {
@@ -18,7 +17,7 @@ LevelPivotScanGlobalState::LevelPivotScanGlobalState() : done(false) {
 
 // Mapping from attr name to output column index (sorted by name to match LevelDB order)
 struct AttrMapping {
-	std::string name;
+	std::string_view name;
 	idx_t output_col;
 	LogicalType type;
 };
@@ -171,7 +170,7 @@ static inline void WriteValueDirect(Vector &vec, idx_t row, std::string_view sv,
 	if (type.id() == LogicalTypeId::VARCHAR) {
 		WriteStringDirect(vec, row, sv);
 	} else {
-		vec.SetValue(row, StringToTypedValue(std::string(sv), type));
+		vec.SetValue(row, StringToTypedValue(sv, type));
 	}
 }
 
@@ -219,8 +218,6 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 		// Build projection-aware column mappings
 		auto &identity_cols = table_entry.GetIdentityColumns();
 		auto &attr_cols = table_entry.GetAttrColumns();
-		std::unordered_set<std::string> identity_set(identity_cols.begin(), identity_cols.end());
-		std::unordered_set<std::string> attr_set(attr_cols.begin(), attr_cols.end());
 
 		for (idx_t i = 0; i < column_ids.size(); i++) {
 			auto col_idx = column_ids[i];
@@ -230,14 +227,14 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 			auto &col = columns.GetColumn(LogicalIndex(col_idx));
 			auto &col_name = col.Name();
 
-			if (identity_set.count(col_name)) {
+			if (std::find(identity_cols.begin(), identity_cols.end(), col_name) != identity_cols.end()) {
 				auto capture_idx = parser.pattern().capture_index(col_name);
 				IdentityMapping im;
 				im.capture_index = capture_idx >= 0 ? static_cast<idx_t>(capture_idx) : 0;
 				im.output_col = i;
 				im.type = col.Type();
 				lstate.identity_mappings.push_back(std::move(im));
-			} else if (attr_set.count(col_name)) {
+			} else if (std::find(attr_cols.begin(), attr_cols.end(), col_name) != attr_cols.end()) {
 				AttrMapping am;
 				am.name = col_name;
 				am.output_col = i;
@@ -364,6 +361,7 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 static void RawScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalState &lstate,
                     LevelPivotScanGlobalState &gstate, DataChunk &output, const vector<column_t> &column_ids) {
 	auto &connection = *table_entry.GetConnection();
+	auto &columns = table_entry.GetColumns();
 
 	if (!lstate.initialized) {
 		lstate.iterator = std::make_unique<level_pivot::LevelDBIterator>(connection.iterator());
@@ -376,7 +374,6 @@ static void RawScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalState 
 		std::string_view key_sv = lstate.iterator->key_view();
 		std::string_view val_sv = lstate.iterator->value_view();
 
-		auto &columns = table_entry.GetColumns();
 		for (idx_t i = 0; i < column_ids.size(); i++) {
 			auto col_idx = column_ids[i];
 			if (col_idx == COLUMN_IDENTIFIER_ROW_ID) {
@@ -384,9 +381,9 @@ static void RawScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalState 
 			}
 			auto &col_type = columns.GetColumn(LogicalIndex(col_idx)).Type();
 			if (col_idx == 0) {
-				output.data[i].SetValue(count, StringToTypedValue(std::string(key_sv), col_type));
+				WriteValueDirect(output.data[i], count, key_sv, col_type);
 			} else if (col_idx == 1) {
-				output.data[i].SetValue(count, StringToTypedValue(std::string(val_sv), col_type));
+				WriteValueDirect(output.data[i], count, val_sv, col_type);
 			}
 		}
 		count++;

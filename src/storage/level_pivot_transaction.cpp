@@ -12,7 +12,7 @@ LevelPivotTransaction::LevelPivotTransaction(TransactionManager &manager, Client
 
 LevelPivotTransaction::~LevelPivotTransaction() = default;
 
-void LevelPivotTransaction::CheckKeyAgainstTables(const std::string &key, LevelPivotSchemaEntry &schema) {
+void LevelPivotTransaction::CheckKeyAgainstTables(std::string_view key, LevelPivotSchemaEntry &schema) {
 	if (all_dirty_) {
 		return;
 	}

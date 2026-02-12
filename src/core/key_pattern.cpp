@@ -105,16 +105,22 @@ void KeyPattern::validate() const {
 	}
 }
 
-bool KeyPattern::has_capture(const std::string &name) const {
-	return std::find(capture_names_.begin(), capture_names_.end(), name) != capture_names_.end();
+bool KeyPattern::has_capture(std::string_view name) const {
+	for (auto &n : capture_names_) {
+		if (n == name) {
+			return true;
+		}
+	}
+	return false;
 }
 
-int KeyPattern::capture_index(const std::string &name) const {
-	auto it = std::find(capture_names_.begin(), capture_names_.end(), name);
-	if (it == capture_names_.end()) {
-		return -1;
+int KeyPattern::capture_index(std::string_view name) const {
+	for (size_t i = 0; i < capture_names_.size(); ++i) {
+		if (capture_names_[i] == name) {
+			return static_cast<int>(i);
+		}
 	}
-	return static_cast<int>(std::distance(capture_names_.begin(), it));
+	return -1;
 }
 
 } // namespace level_pivot

@@ -44,9 +44,12 @@ SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chun
 		idx_t num_row_id_cols = row_id_cols.size();
 		idx_t row_id_offset = chunk.ColumnCount() - num_row_id_cols;
 
+		std::vector<std::string> identity_values;
+		identity_values.reserve(num_row_id_cols);
+
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			// Extract identity from row_id columns (at end of chunk)
-			auto identity_values = ExtractIdentityValues(chunk, row, row_id_offset, num_row_id_cols);
+			ExtractIdentityValues(identity_values, chunk, row, row_id_offset, num_row_id_cols);
 
 			// Process each updated column (at beginning of chunk)
 			for (idx_t i = 0; i < num_update_cols; i++) {

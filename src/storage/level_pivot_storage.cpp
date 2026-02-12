@@ -25,8 +25,8 @@ LevelDBIterator &LevelDBIterator::operator=(LevelDBIterator &&other) noexcept {
 	return *this;
 }
 
-void LevelDBIterator::seek(const std::string &key) {
-	iter_->Seek(key);
+void LevelDBIterator::seek(std::string_view key) {
+	iter_->Seek(leveldb::Slice(key.data(), key.size()));
 }
 
 void LevelDBIterator::seek_to_first() {
@@ -95,13 +95,13 @@ LevelDBWriteBatch &LevelDBWriteBatch::operator=(LevelDBWriteBatch &&other) noexc
 	return *this;
 }
 
-void LevelDBWriteBatch::put(const std::string &key, const std::string &value) {
-	batch_->Put(key, value);
+void LevelDBWriteBatch::put(std::string_view key, std::string_view value) {
+	batch_->Put(leveldb::Slice(key.data(), key.size()), leveldb::Slice(value.data(), value.size()));
 	++pending_count_;
 }
 
-void LevelDBWriteBatch::del(const std::string &key) {
-	batch_->Delete(key);
+void LevelDBWriteBatch::del(std::string_view key) {
+	batch_->Delete(leveldb::Slice(key.data(), key.size()));
 	++pending_count_;
 }
 
@@ -158,36 +158,38 @@ LevelDBConnection::~LevelDBConnection() {
 	delete db_;
 }
 
-std::optional<std::string> LevelDBConnection::get(const std::string &key) {
+std::optional<std::string> LevelDBConnection::get(std::string_view key) {
 	std::string value;
 	leveldb::ReadOptions options;
-	leveldb::Status status = db_->Get(options, key, &value);
+	leveldb::Slice key_slice(key.data(), key.size());
+	leveldb::Status status = db_->Get(options, key_slice, &value);
 	if (status.IsNotFound()) {
 		return std::nullopt;
 	}
 	if (!status.ok()) {
-		throw LevelDBError("Get failed for key '" + key + "': " + status.ToString());
+		throw LevelDBError("Get failed for key '" + std::string(key) + "': " + status.ToString());
 	}
 	return value;
 }
 
-void LevelDBConnection::put(const std::string &key, const std::string &value) {
+void LevelDBConnection::put(std::string_view key, std::string_view value) {
 	check_write_allowed();
 	leveldb::WriteOptions options;
 	options.sync = false;
-	leveldb::Status status = db_->Put(options, key, value);
+	leveldb::Status status = db_->Put(options, leveldb::Slice(key.data(), key.size()),
+	                                  leveldb::Slice(value.data(), value.size()));
 	if (!status.ok()) {
-		throw LevelDBError("Put failed for key '" + key + "': " + status.ToString());
+		throw LevelDBError("Put failed for key '" + std::string(key) + "': " + status.ToString());
 	}
 }
 
-void LevelDBConnection::del(const std::string &key) {
+void LevelDBConnection::del(std::string_view key) {
 	check_write_allowed();
 	leveldb::WriteOptions options;
 	options.sync = false;
-	leveldb::Status status = db_->Delete(options, key);
+	leveldb::Status status = db_->Delete(options, leveldb::Slice(key.data(), key.size()));
 	if (!status.ok()) {
-		throw LevelDBError("Delete failed for key '" + key + "': " + status.ToString());
+		throw LevelDBError("Delete failed for key '" + std::string(key) + "': " + status.ToString());
 	}
 }
 

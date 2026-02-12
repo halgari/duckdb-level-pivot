@@ -8,21 +8,21 @@
 
 namespace duckdb {
 
-inline Value StringToTypedValue(const std::string &str_value, const LogicalType &type) {
+inline Value StringToTypedValue(std::string_view str_value, const LogicalType &type) {
 	if (type.id() == LogicalTypeId::VARCHAR) {
-		return Value(str_value);
+		return Value(std::string(str_value));
 	}
-	return Value(str_value).DefaultCastAs(type);
+	return Value(std::string(str_value)).DefaultCastAs(type);
 }
 
-inline bool IsWithinPrefix(std::string_view key, const std::string &prefix) {
+inline bool IsWithinPrefix(std::string_view key, std::string_view prefix) {
 	if (prefix.empty()) {
 		return true;
 	}
 	if (key.size() < prefix.size()) {
 		return false;
 	}
-	return key.substr(0, prefix.size()) == prefix;
+	return key.compare(0, prefix.size(), prefix.data(), prefix.size()) == 0;
 }
 
 inline bool IdentityMatches(const std::vector<std::string> &identity, const std::vector<std::string_view> &views) {
@@ -37,14 +37,13 @@ inline bool IdentityMatches(const std::vector<std::string> &identity, const std:
 	return true;
 }
 
-inline std::vector<std::string> ExtractIdentityValues(DataChunk &chunk, idx_t row, idx_t col_offset, idx_t num_cols) {
-	std::vector<std::string> identity_values;
-	identity_values.reserve(num_cols);
+inline void ExtractIdentityValues(std::vector<std::string> &out, DataChunk &chunk, idx_t row, idx_t col_offset,
+                                  idx_t num_cols) {
+	out.clear();
 	for (idx_t i = 0; i < num_cols; i++) {
 		auto val = chunk.data[col_offset + i].GetValue(row);
-		identity_values.push_back(val.IsNull() ? "" : val.ToString());
+		out.push_back(val.IsNull() ? "" : val.ToString());
 	}
-	return identity_values;
 }
 
 } // namespace duckdb

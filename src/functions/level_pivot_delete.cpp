@@ -34,9 +34,12 @@ SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chun
 		auto batch = connection.create_batch();
 		auto iter = connection.iterator();
 
+		std::vector<std::string> identity_values;
+		identity_values.reserve(chunk.ColumnCount());
+
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			// The child plan emits the identity columns (from GetRowIdColumns)
-			auto identity_values = ExtractIdentityValues(chunk, row, 0, chunk.ColumnCount());
+			ExtractIdentityValues(identity_values, chunk, row, 0, chunk.ColumnCount());
 
 			// Find all keys matching this identity and delete them
 			std::string prefix = parser.build_prefix(identity_values);
@@ -54,9 +57,8 @@ SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chun
 
 				auto parsed = parser.parse_view(key_sv);
 				if (parsed && IdentityMatches(identity_values, parsed->capture_values)) {
-					std::string key(key_sv);
-					batch.del(key);
-					txn.CheckKeyAgainstTables(key, schema);
+					batch.del(key_sv);
+					txn.CheckKeyAgainstTables(key_sv, schema);
 				}
 				iter.next();
 			}
@@ -69,7 +71,7 @@ SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chun
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			auto key_val = chunk.data[0].GetValue(row);
 			if (!key_val.IsNull()) {
-				std::string key = key_val.ToString();
+				auto key = key_val.ToString();
 				batch.del(key);
 				txn.CheckKeyAgainstTables(key, schema);
 			}

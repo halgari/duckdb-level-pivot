@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <variant>
 #include <optional>
@@ -61,8 +62,8 @@ public:
 	size_t capture_count() const {
 		return capture_names_.size();
 	}
-	bool has_capture(const std::string &name) const;
-	int capture_index(const std::string &name) const;
+	bool has_capture(std::string_view name) const;
+	int capture_index(std::string_view name) const;
 
 private:
 	std::string pattern_;

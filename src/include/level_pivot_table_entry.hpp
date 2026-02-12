@@ -4,6 +4,7 @@
 #include "key_parser.hpp"
 #include "level_pivot_storage.hpp"
 #include <memory>
+#include <unordered_map>
 
 namespace duckdb {
 
@@ -61,6 +62,9 @@ private:
 	std::unique_ptr<level_pivot::KeyParser> parser_; // nullptr for raw mode
 	vector<string> identity_columns_;
 	vector<string> attr_columns_;
+	std::unordered_map<std::string, idx_t> col_name_to_index_;
+
+	void BuildColumnIndexCache();
 };
 
 } // namespace duckdb

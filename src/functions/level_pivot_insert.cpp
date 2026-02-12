@@ -4,7 +4,6 @@
 #include "level_pivot_transaction.hpp"
 #include "key_parser.hpp"
 #include "level_pivot_storage.hpp"
-#include <unordered_map>
 
 namespace duckdb {
 
@@ -36,38 +35,31 @@ SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chun
 		auto &columns = lp_table.GetColumns();
 
 		auto batch = connection.create_batch();
+		auto &capture_names = parser.pattern().capture_names();
 
-		// Pre-build column name -> chunk index map (O(1) lookups in the row loop)
-		std::unordered_map<std::string, idx_t> col_index_map;
-		for (auto &col : columns.Logical()) {
-			col_index_map[col.Name()] = col.Logical().index;
-		}
+		std::vector<std::string> identity_values;
+		identity_values.reserve(capture_names.size());
 
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			// Extract identity values in capture order
-			std::vector<std::string> identity_values;
-			auto &capture_names = parser.pattern().capture_names();
+			identity_values.clear();
 			for (auto &cap_name : capture_names) {
-				auto it2 = col_index_map.find(cap_name);
-				if (it2 != col_index_map.end()) {
-					auto val = chunk.data[it2->second].GetValue(row);
-					if (val.IsNull()) {
-						throw InvalidInputException("Cannot insert NULL into identity column '%s'", cap_name);
-					}
-					identity_values.push_back(val.ToString());
+				auto col_idx = lp_table.GetColumnIndex(cap_name);
+				auto val = chunk.data[col_idx].GetValue(row);
+				if (val.IsNull()) {
+					throw InvalidInputException("Cannot insert NULL into identity column '%s'", cap_name);
 				}
+				identity_values.push_back(val.ToString());
 			}
 
 			// Write a key for each non-null attr column
 			for (auto &attr_name : attr_cols) {
-				auto it2 = col_index_map.find(attr_name);
-				if (it2 != col_index_map.end()) {
-					auto val = chunk.data[it2->second].GetValue(row);
-					if (!val.IsNull()) {
-						std::string key = parser.build(identity_values, attr_name);
-						batch.put(key, val.ToString());
-						txn.CheckKeyAgainstTables(key, schema);
-					}
+				auto col_idx = lp_table.GetColumnIndex(attr_name);
+				auto val = chunk.data[col_idx].GetValue(row);
+				if (!val.IsNull()) {
+					std::string key = parser.build(identity_values, attr_name);
+					batch.put(key, val.ToString());
+					txn.CheckKeyAgainstTables(key, schema);
 				}
 			}
 		}

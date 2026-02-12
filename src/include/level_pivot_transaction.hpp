@@ -4,6 +4,7 @@
 #include "duckdb/transaction/transaction.hpp"
 #include <unordered_set>
 #include <string>
+#include <string_view>
 
 namespace duckdb {
 
@@ -15,7 +16,7 @@ public:
 	~LevelPivotTransaction() override;
 
 	//! Check a key against all tables in the schema and mark matching ones dirty
-	void CheckKeyAgainstTables(const std::string &key, LevelPivotSchemaEntry &schema);
+	void CheckKeyAgainstTables(std::string_view key, LevelPivotSchemaEntry &schema);
 
 	bool HasDirtyTables() const {
 		return !dirty_tables_.empty();
