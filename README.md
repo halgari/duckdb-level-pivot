@@ -1,102 +1,208 @@
 # LevelPivot
 
-This repository is based on https://github.com/duckdb/extension-template, check it out if you want to build and ship your own DuckDB extension.
+A DuckDB storage extension that wraps [LevelDB](https://github.com/google/leveldb) with **pivot semantics** — structured, multi-column relational tables stored as key-value pairs in LevelDB.
 
----
+## How It Works
 
-This extension, LevelPivot, allow you to ... <extension_goal>.
+LevelPivot maps relational rows to LevelDB keys using a **key pattern**. Each attribute value in a row becomes a separate LevelDB entry, and SELECTs reassemble rows by grouping keys that share the same identity prefix.
 
+Given a table with pattern `users##{group}##{id}##{attr}` and columns `[group, id, name, email]`:
+
+```sql
+INSERT INTO testdb.users VALUES ('admins', 'u1', 'Alice', 'alice@ex.com');
+```
+
+This produces two LevelDB keys:
+
+```
+users##admins##u1##name  → Alice
+users##admins##u1##email → alice@ex.com
+```
+
+A SELECT reconstructs the row by iterating keys with the shared prefix `users##admins##u1##` and pivoting the attribute names back into columns:
+
+```
+group   | id | name  | email
+admins  | u1 | Alice | alice@ex.com
+```
+
+## Quick Start
+
+```sql
+-- Attach a LevelDB database (creates the directory if needed)
+ATTACH 'my_data' AS db (TYPE level_pivot, CREATE_IF_MISSING true);
+
+-- Create a pivot table
+CALL level_pivot_create_table('db', 'users', 'users##{group}##{id}##{attr}',
+  ['group', 'id', 'name', 'email']);
+
+-- Insert, query, update, delete — standard SQL
+INSERT INTO db.users VALUES ('admins', 'u1', 'Alice', 'alice@ex.com');
+SELECT * FROM db.users WHERE "group" = 'admins';
+UPDATE db.users SET email = 'new@ex.com' WHERE "group" = 'admins' AND id = 'u1';
+DELETE FROM db.users WHERE "group" = 'admins' AND id = 'u1';
+
+-- Clean up
+CALL level_pivot_drop_table('db', 'users');
+DETACH db;
+```
+
+## Table Modes
+
+### Pivot Mode (default)
+
+Pivot tables use a key pattern to decompose rows into LevelDB key-value pairs. The pattern has three kinds of segments:
+
+- **Literals** — fixed text like `users##` that scopes keys
+- **Captures** `{name}` — identity columns that form the row's primary key
+- **`{attr}`** — placeholder replaced by each attribute column name
+
+```sql
+CALL level_pivot_create_table('db', 'metrics', 'metrics##{host}##{ts}##{attr}',
+  ['host', 'ts', 'cpu_pct', 'mem_mb'],
+  column_types := ['VARCHAR', 'BIGINT', 'DOUBLE', 'BIGINT']);
+```
+
+Identity columns (`host`, `ts`) uniquely identify a row. Attribute columns (`cpu_pct`, `mem_mb`) each get their own LevelDB entry per row.
+
+### Raw Mode
+
+Raw tables provide simple key-value access without pivot logic. They must have exactly two columns.
+
+```sql
+CALL level_pivot_create_table('db', 'kv', NULL,
+  ['key', 'value'], table_mode := 'raw');
+
+INSERT INTO db.kv VALUES ('hello', 'world');
+SELECT * FROM db.kv;
+```
+
+Keys are scoped with a `tablename##` prefix in LevelDB to prevent collisions between tables.
+
+## ATTACH Options
+
+```sql
+ATTACH 'path/to/leveldb' AS db (
+  TYPE level_pivot,
+  READ_ONLY false,            -- open read-only (default: false)
+  CREATE_IF_MISSING true,     -- create LevelDB dir if absent (default: false)
+  block_cache_size 8388608,   -- LevelDB block cache in bytes (default: 8MB)
+  write_buffer_size 4194304   -- LevelDB write buffer in bytes (default: 4MB)
+);
+```
+
+In read-only mode, SELECT works but INSERT, UPDATE, and DELETE return an error.
+
+## Column Types
+
+By default all columns are VARCHAR. Pass `column_types` to use typed columns:
+
+```sql
+CALL level_pivot_create_table('db', 'metrics', 'metrics##{host}##{ts}##{attr}',
+  ['host', 'ts', 'cpu_pct', 'mem_mb'],
+  column_types := ['VARCHAR', 'BIGINT', 'DOUBLE', 'BIGINT']);
+```
+
+Values are stored as strings in LevelDB and cast on read. Supported types include VARCHAR, BIGINT, INTEGER, DOUBLE, BOOLEAN, and anything DuckDB's `TransformStringToLogicalType` accepts. Typed columns enable correct numeric comparisons and aggregations:
+
+```sql
+-- Numeric comparison (not lexicographic)
+SELECT * FROM db.metrics WHERE ts > 1500;
+
+-- Aggregation works on typed columns
+SELECT SUM(mem_mb), MAX(cpu_pct) FROM db.metrics;
+```
+
+Omitting `column_types` defaults everything to VARCHAR for backward compatibility.
+
+## Filter Pushdown
+
+Equality filters on consecutive identity columns (in pattern order) are converted to LevelDB prefix seeks:
+
+```sql
+-- Full prefix seek: seeks directly to users##admins##u1##
+SELECT * FROM db.users WHERE "group" = 'admins' AND id = 'u1';
+
+-- Partial prefix seek: seeks to users##admins##, scans within
+SELECT * FROM db.users WHERE "group" = 'admins';
+
+-- No prefix optimization (post-filter only — still works, just scans all keys)
+SELECT * FROM db.users WHERE id = 'u3';
+SELECT * FROM db.users WHERE name = 'Bob';
+```
+
+## NULL Handling
+
+- **Identity columns** cannot be NULL (INSERT will error).
+- **Attribute columns** can be NULL — no LevelDB key is stored for that attribute.
+- Setting all attributes to NULL via UPDATE causes the row to vanish (no keys remain for that identity).
+
+```sql
+INSERT INTO db.users VALUES ('testers', 'u6', 'Frank', NULL);
+-- Row exists with email = NULL
+
+UPDATE db.users SET name = NULL WHERE "group" = 'testers' AND id = 'u6';
+-- Row vanishes — both name and email are now NULL
+```
+
+## Data Persistence
+
+LevelDB data persists to disk across DETACH/ATTACH cycles. However, **table definitions are transient** — after re-attaching, you must call `level_pivot_create_table` again to register the table schema. The underlying data is untouched.
+
+```sql
+ATTACH 'my_data' AS db (TYPE level_pivot, CREATE_IF_MISSING true);
+CALL level_pivot_create_table('db', 'users', 'users##{group}##{id}##{attr}',
+  ['group', 'id', 'name', 'email']);
+INSERT INTO db.users VALUES ('admins', 'u1', 'Alice', 'alice@ex.com');
+DETACH db;
+
+-- Later...
+ATTACH 'my_data' AS db (TYPE level_pivot);
+CALL level_pivot_create_table('db', 'users', 'users##{group}##{id}##{attr}',
+  ['group', 'id', 'name', 'email']);
+SELECT * FROM db.users;  -- Alice is still here
+```
+
+## Additional Features
+
+- **Multi-row INSERT**: `INSERT INTO db.t VALUES (...), (...), (...);`
+- **INSERT INTO ... SELECT**: `INSERT INTO db.backup SELECT * FROM db.users WHERE "group" = 'admins';`
+- **Column projection**: Only requested attribute keys are read from LevelDB.
+- **DROP TABLE**: `CALL level_pivot_drop_table('db', 'table_name');`
+- **SHOW TABLES**: `SELECT table_name FROM information_schema.tables WHERE table_catalog = 'db';`
 
 ## Building
-### Managing dependencies
-DuckDB extensions uses VCPKG for dependency management. Enabling VCPKG is very simple: follow the [installation instructions](https://vcpkg.io/en/getting-started) or just run the following:
+
+### Dependencies
+
+DuckDB extensions use vcpkg for dependency management. LevelPivot depends on `leveldb`:
+
 ```shell
 git clone https://github.com/Microsoft/vcpkg.git
 ./vcpkg/bootstrap-vcpkg.sh
 export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
 ```
-Note: VCPKG is only required for extensions that want to rely on it for dependency management. If you want to develop an extension without dependencies, or want to do your own dependency management, just skip this step. Note that the example extension uses VCPKG to build with a dependency for instructive purposes, so when skipping this step the build may not work without removing the dependency.
 
-### Build steps
-Now to build the extension, run:
-```sh
+### Build
+
+```shell
 make
 ```
-The main binaries that will be built are:
-```sh
-./build/release/duckdb
-./build/release/test/unittest
-./build/release/extension/level_pivot/level_pivot.duckdb_extension
-```
-- `duckdb` is the binary for the duckdb shell with the extension code automatically loaded.
-- `unittest` is the test runner of duckdb. Again, the extension is already linked into the binary.
-- `level_pivot.duckdb_extension` is the loadable binary as it would be distributed.
 
-## Running the extension
-To run the extension code, simply start the shell with `./build/release/duckdb`.
+Produces:
 
-Now we can use the features from the extension directly in DuckDB. The template contains a single scalar function `level_pivot()` that takes a string arguments and returns a string:
-```
-D select level_pivot('Jane') as result;
-┌───────────────┐
-│    result     │
-│    varchar    │
-├───────────────┤
-│ LevelPivot Jane 🐥 │
-└───────────────┘
-```
+- `./build/release/duckdb` — DuckDB shell with the extension loaded
+- `./build/release/test/unittest` — test runner
+- `./build/release/extension/level_pivot/level_pivot.duckdb_extension` — loadable extension binary
 
-## Running the tests
-Different tests can be created for DuckDB extensions. The primary way of testing DuckDB extensions should be the SQL tests in `./test/sql`. These SQL tests can be run using:
-```sh
+### Test
+
+```shell
 make test
 ```
 
-### Installing the deployed binaries
-To install your extension binaries from S3, you will need to do two things. Firstly, DuckDB should be launched with the
-`allow_unsigned_extensions` option set to true. How to set this will depend on the client you're using. Some examples:
+Or run a specific test:
 
-CLI:
 ```shell
-duckdb -unsigned
+./build/release/test/unittest "test/sql/level_pivot.test"
 ```
-
-Python:
-```python
-con = duckdb.connect(':memory:', config={'allow_unsigned_extensions' : 'true'})
-```
-
-NodeJS:
-```js
-db = new duckdb.Database(':memory:', {"allow_unsigned_extensions": "true"});
-```
-
-Secondly, you will need to set the repository endpoint in DuckDB to the HTTP url of your bucket + version of the extension
-you want to install. To do this run the following SQL query in DuckDB:
-```sql
-SET custom_extension_repository='bucket.s3.eu-west-1.amazonaws.com/<your_extension_name>/latest';
-```
-Note that the `/latest` path will allow you to install the latest extension version available for your current version of
-DuckDB. To specify a specific version, you can pass the version instead.
-
-After running these steps, you can install and load your extension using the regular INSTALL/LOAD commands in DuckDB:
-```sql
-INSTALL level_pivot;
-LOAD level_pivot;
-```
-
-## Setting up CLion
-
-### Opening project
-Configuring CLion with this extension requires a little work. Firstly, make sure that the DuckDB submodule is available.
-Then make sure to open `./duckdb/CMakeLists.txt` (so not the top level `CMakeLists.txt` file from this repo) as a project in CLion.
-Now to fix your project path go to `tools->CMake->Change Project Root`([docs](https://www.jetbrains.com/help/clion/change-project-root-directory.html)) to set the project root to the root dir of this repo.
-
-### Debugging
-To set up debugging in CLion, there are two simple steps required. Firstly, in `CLion -> Settings / Preferences -> Build, Execution, Deploy -> CMake` you will need to add the desired builds (e.g. Debug, Release, RelDebug, etc). There's different ways to configure this, but the easiest is to leave all empty, except the `build path`, which needs to be set to `../build/{build type}`, and CMake Options to which the following flag should be added, with the path to the extension CMakeList:
-
-```
--DDUCKDB_EXTENSION_CONFIGS=<path_to_the_exentension_CMakeLists.txt>
-```
-
-The second step is to configure the unittest runner as a run/debug configuration. To do this, go to `Run -> Edit Configurations` and click `+ -> Cmake Application`. The target and executable should be `unittest`. This will run all the DuckDB tests. To specify only running the extension specific tests, add `--test-dir ../../.. [sql]` to the `Program Arguments`. Note that it is recommended to use the `unittest` executable for testing/development within CLion. The actual DuckDB CLI currently does not reliably work as a run target in CLion.
