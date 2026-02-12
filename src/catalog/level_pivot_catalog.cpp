@@ -17,8 +17,7 @@
 
 namespace duckdb {
 
-LevelPivotCatalog::LevelPivotCatalog(AttachedDatabase &db,
-                                     std::shared_ptr<level_pivot::LevelDBConnection> connection)
+LevelPivotCatalog::LevelPivotCatalog(AttachedDatabase &db, std::shared_ptr<level_pivot::LevelDBConnection> connection)
     : Catalog(db), connection_(std::move(connection)) {
 }
 
@@ -137,8 +136,8 @@ void LevelPivotCatalog::CreatePivotTable(const string &table_name, const string 
 		info->columns.AddColumn(ColumnDefinition(column_names[i], column_types[i]));
 	}
 
-	auto table_entry = make_uniq<LevelPivotTableEntry>(*this, *main_schema_, *info, connection_,
-	                                                   std::move(key_parser), identity_columns, attr_columns);
+	auto table_entry = make_uniq<LevelPivotTableEntry>(*this, *main_schema_, *info, connection_, std::move(key_parser),
+	                                                   identity_columns, attr_columns);
 	main_schema_->AddTable(std::move(table_entry));
 }
 

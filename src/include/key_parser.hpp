@@ -51,8 +51,7 @@ public:
 	std::optional<ParsedKeyView> parse_view(std::string_view key) const;
 
 	std::string build(const std::vector<std::string> &capture_values, const std::string &attr_name) const;
-	std::string build(const std::unordered_map<std::string, std::string> &captures,
-	                  const std::string &attr_name) const;
+	std::string build(const std::unordered_map<std::string, std::string> &captures, const std::string &attr_name) const;
 
 	std::string build_prefix() const;
 	std::string build_prefix(const std::vector<std::string> &capture_values) const;

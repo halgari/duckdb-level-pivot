@@ -129,8 +129,7 @@ static unique_ptr<GlobalTableFunctionState> LevelPivotInitGlobal(ClientContext &
 	return std::move(result);
 }
 
-static unique_ptr<LocalTableFunctionState> LevelPivotInitLocal(ExecutionContext &context,
-                                                               TableFunctionInitInput &input,
+static unique_ptr<LocalTableFunctionState> LevelPivotInitLocal(ExecutionContext &context, TableFunctionInitInput &input,
                                                                GlobalTableFunctionState *global_state) {
 	return make_uniq<LevelPivotScanLocalState>();
 }
@@ -248,8 +247,8 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 							auto capture_idx = parser.pattern().capture_index(col_name);
 							if (capture_idx >= 0 &&
 							    static_cast<size_t>(capture_idx) < lstate.current_identity->size()) {
-								output.data[i].SetValue(count,
-								                        StringToTypedValue((*lstate.current_identity)[capture_idx], col.Type()));
+								output.data[i].SetValue(
+								    count, StringToTypedValue((*lstate.current_identity)[capture_idx], col.Type()));
 							} else {
 								output.data[i].SetValue(count, Value());
 							}
@@ -320,9 +319,9 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 				for (idx_t id_idx = 0; id_idx < identity_cols.size(); id_idx++) {
 					if (col_name == identity_cols[id_idx]) {
 						auto capture_idx = parser.pattern().capture_index(col_name);
-						if (capture_idx >= 0 &&
-						    static_cast<size_t>(capture_idx) < lstate.current_identity->size()) {
-							output.data[i].SetValue(count, StringToTypedValue((*lstate.current_identity)[capture_idx], col.Type()));
+						if (capture_idx >= 0 && static_cast<size_t>(capture_idx) < lstate.current_identity->size()) {
+							output.data[i].SetValue(
+							    count, StringToTypedValue((*lstate.current_identity)[capture_idx], col.Type()));
 						} else {
 							output.data[i].SetValue(count, Value());
 						}

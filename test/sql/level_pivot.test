@@ -1,6 +1,6 @@
 # name: test/sql/level_pivot.test
 # description: test level_pivot extension
-# group: [level_pivot]
+# group: [sql]
 
 require level_pivot
 

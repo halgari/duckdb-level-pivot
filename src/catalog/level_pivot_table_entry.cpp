@@ -11,8 +11,8 @@ LevelPivotTableEntry::LevelPivotTableEntry(Catalog &catalog, SchemaCatalogEntry 
                                            std::shared_ptr<level_pivot::LevelDBConnection> connection,
                                            std::unique_ptr<level_pivot::KeyParser> parser,
                                            vector<string> identity_columns, vector<string> attr_columns)
-    : TableCatalogEntry(catalog, schema, info), mode_(LevelPivotTableMode::PIVOT),
-      connection_(std::move(connection)), parser_(std::move(parser)), identity_columns_(std::move(identity_columns)),
+    : TableCatalogEntry(catalog, schema, info), mode_(LevelPivotTableMode::PIVOT), connection_(std::move(connection)),
+      parser_(std::move(parser)), identity_columns_(std::move(identity_columns)),
       attr_columns_(std::move(attr_columns)) {
 }
 

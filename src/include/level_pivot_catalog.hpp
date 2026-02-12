@@ -44,8 +44,8 @@ public:
 	string GetDBPath() override;
 
 	// Table management (called by level_pivot_create_table function)
-	void CreatePivotTable(const string &table_name, const string &pattern,
-	                      const vector<string> &column_names, const vector<LogicalType> &column_types);
+	void CreatePivotTable(const string &table_name, const string &pattern, const vector<string> &column_names,
+	                      const vector<LogicalType> &column_types);
 	void CreateRawTable(const string &table_name, const vector<string> &column_names,
 	                    const vector<LogicalType> &column_types);
 	void DropTable(const string &table_name);

@@ -47,8 +47,7 @@ SinkResultType LevelPivotDelete::Sink(ExecutionContext &context, DataChunk &chun
 
 			while (iter.valid()) {
 				std::string_view key_sv = iter.key_view();
-				if (!prefix.empty() && (key_sv.size() < prefix.size() ||
-				                        key_sv.substr(0, prefix.size()) != prefix)) {
+				if (!prefix.empty() && (key_sv.size() < prefix.size() || key_sv.substr(0, prefix.size()) != prefix)) {
 					break;
 				}
 

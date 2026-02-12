@@ -94,10 +94,10 @@ static void CreateTableFunc(ClientContext &context, TableFunctionInput &data, Da
 }
 
 TableFunction GetCreateTableFunction() {
-	TableFunction func("level_pivot_create_table",
-	                   {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
-	                    LogicalType::LIST(LogicalType::VARCHAR)},
-	                   CreateTableFunc, CreateTableBind);
+	TableFunction func(
+	    "level_pivot_create_table",
+	    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR)},
+	    CreateTableFunc, CreateTableBind);
 	func.named_parameters["table_mode"] = LogicalType::VARCHAR;
 	func.named_parameters["column_types"] = LogicalType::LIST(LogicalType::VARCHAR);
 	return func;

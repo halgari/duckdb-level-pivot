@@ -37,8 +37,8 @@ void KeyPattern::parse(const std::string &pattern) {
 
 			for (char c : name) {
 				if (!std::isalnum(c) && c != '_') {
-					throw KeyPatternError("Invalid character '" + std::string(1, c) + "' in placeholder name '" +
-					                      name + "'");
+					throw KeyPatternError("Invalid character '" + std::string(1, c) + "' in placeholder name '" + name +
+					                      "'");
 				}
 			}
 

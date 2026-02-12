@@ -51,8 +51,9 @@ static unique_ptr<Catalog> LevelPivotAttach(optional_ptr<StorageExtensionInfo> s
 	return make_uniq<LevelPivotCatalog>(db, std::move(connection));
 }
 
-static unique_ptr<TransactionManager> LevelPivotCreateTransactionManager(
-    optional_ptr<StorageExtensionInfo> storage_info, AttachedDatabase &db, Catalog &catalog) {
+static unique_ptr<TransactionManager>
+LevelPivotCreateTransactionManager(optional_ptr<StorageExtensionInfo> storage_info, AttachedDatabase &db,
+                                   Catalog &catalog) {
 	return make_uniq<LevelPivotTransactionManager>(db);
 }
 
