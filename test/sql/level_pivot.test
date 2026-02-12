@@ -65,9 +65,9 @@ INSERT INTO testdb.kv VALUES ('hello', 'world');
 statement ok
 INSERT INTO testdb.kv VALUES ('foo', 'bar');
 
-# SELECT from raw table
+# SELECT from raw table (raw tables see all keys in the database, filter to our keys)
 query II rowsort
-SELECT * FROM testdb.kv;
+SELECT * FROM testdb.kv WHERE key IN ('foo', 'hello');
 ----
 foo	bar
 hello	world
@@ -77,7 +77,7 @@ statement ok
 DELETE FROM testdb.kv WHERE key = 'foo';
 
 query I
-SELECT count(*) FROM testdb.kv;
+SELECT count(*) FROM testdb.kv WHERE key IN ('foo', 'hello');
 ----
 1
 

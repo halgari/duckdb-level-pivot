@@ -24,8 +24,6 @@ LevelPivotTableEntry::LevelPivotTableEntry(Catalog &catalog, SchemaCatalogEntry 
 	if (info.columns.LogicalColumnCount() >= 1) {
 		identity_columns_.push_back(info.columns.GetColumn(LogicalIndex(0)).Name());
 	}
-	// Scope raw tables by table name prefix
-	raw_key_prefix_ = info.table + "##";
 }
 
 idx_t LevelPivotTableEntry::GetColumnIndex(const string &col_name) const {
