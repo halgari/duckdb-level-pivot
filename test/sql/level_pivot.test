@@ -81,6 +81,108 @@ SELECT count(*) FROM testdb.kv;
 ----
 1
 
-# DETACH
+# ===== Filter pushdown tests =====
+
+# Re-insert deleted user for filter tests
+statement ok
+INSERT INTO testdb.users VALUES ('viewers', 'u3', 'Charlie', 'charlie@ex.com');
+
+# Filter on first identity column only (partial prefix)
+query IIII rowsort
+SELECT * FROM testdb.users WHERE "group" = 'admins';
+----
+admins	u1	Alice	newalice@ex.com
+admins	u2	Bob	bob@ex.com
+
+# Filter on both identity columns (full prefix)
+query IIII
+SELECT * FROM testdb.users WHERE "group" = 'admins' AND id = 'u2';
+----
+admins	u2	Bob	bob@ex.com
+
+# Filter on second identity column only (no prefix optimization, still works via post-filter)
+query IIII
+SELECT * FROM testdb.users WHERE id = 'u3';
+----
+viewers	u3	Charlie	charlie@ex.com
+
+# Filter with no results
+query I
+SELECT count(*) FROM testdb.users WHERE "group" = 'nonexistent';
+----
+0
+
+# Filter on attr column (no prefix optimization, post-filter only)
+query IIII
+SELECT * FROM testdb.users WHERE name = 'Bob';
+----
+admins	u2	Bob	bob@ex.com
+
+# ===== Multi-row insert =====
+statement ok
+INSERT INTO testdb.users VALUES ('editors', 'u4', 'Diana', 'diana@ex.com'), ('editors', 'u5', 'Eve', 'eve@ex.com');
+
+query IIII rowsort
+SELECT * FROM testdb.users WHERE "group" = 'editors';
+----
+editors	u4	Diana	diana@ex.com
+editors	u5	Eve	eve@ex.com
+
+# ===== NULL handling =====
+
+# Insert with NULL attr
+statement ok
+INSERT INTO testdb.users VALUES ('testers', 'u6', 'Frank', NULL);
+
+query IIII
+SELECT * FROM testdb.users WHERE "group" = 'testers' AND id = 'u6';
+----
+testers	u6	Frank	NULL
+
+# Update to set NULL - when all attrs are NULL, the row vanishes from pivot
+# (no LevelDB keys remain for this identity)
+statement ok
+UPDATE testdb.users SET name = NULL WHERE "group" = 'testers' AND id = 'u6';
+
+query I
+SELECT count(*) FROM testdb.users WHERE "group" = 'testers' AND id = 'u6';
+----
+0
+
+# ===== Raw table UPDATE =====
+statement ok
+UPDATE testdb.kv SET value = 'universe' WHERE key = 'hello';
+
+query II
+SELECT * FROM testdb.kv WHERE key = 'hello';
+----
+hello	universe
+
+# ===== DETACH and re-ATTACH (data persists) =====
+statement ok
+DETACH testdb;
+
+statement ok
+ATTACH '__TEST_DIR__/test_leveldb' AS testdb (TYPE level_pivot, READ_ONLY false, CREATE_IF_MISSING false);
+
+# Re-create table definitions (transient, lost on detach)
+statement ok
+CALL level_pivot_create_table('testdb', 'users', 'users##{group}##{id}##{attr}', ['group', 'id', 'name', 'email']);
+
+statement ok
+CALL level_pivot_create_table('testdb', 'kv', NULL, ['key', 'value'], table_mode := 'raw');
+
+# Verify data survived detach/attach (u6 vanished because all attrs NULL)
+query I
+SELECT count(*) FROM testdb.users;
+----
+5
+
+query II
+SELECT * FROM testdb.kv WHERE key = 'hello';
+----
+hello	universe
+
+# Final DETACH
 statement ok
 DETACH testdb;

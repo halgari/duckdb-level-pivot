@@ -3,6 +3,10 @@
 #include "key_parser.hpp"
 #include "level_pivot_storage.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/planner/expression/bound_comparison_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 
 namespace duckdb {
 
@@ -29,10 +33,99 @@ static unique_ptr<FunctionData> LevelPivotBind(ClientContext &context, TableFunc
 	throw InternalException("LevelPivot scan should not be bound directly");
 }
 
+// Called during optimization to extract equality filters on identity columns.
+// We inspect the expressions and store a narrowed prefix in bind_data for the scan to use.
+// We leave all filters in place so DuckDB still applies them as a post-filter.
+static void LevelPivotPushdownComplexFilter(ClientContext &context, LogicalGet &get, FunctionData *bind_data,
+                                            vector<unique_ptr<Expression>> &filters) {
+	if (!bind_data) {
+		return;
+	}
+	auto &scan_data = bind_data->Cast<LevelPivotScanData>();
+	// Always reset prefix - bind_data may be reused across queries via Copy()
+	scan_data.filter_prefix.clear();
+	auto *table_entry = scan_data.table_entry;
+	if (!table_entry || table_entry->GetTableMode() != LevelPivotTableMode::PIVOT) {
+		return;
+	}
+
+	auto &parser = table_entry->GetKeyParser();
+	auto &pattern = parser.pattern();
+	auto &capture_names = pattern.capture_names();
+
+	// Build a map: column_name -> equality_value from the filter expressions
+	std::unordered_map<std::string, std::string> eq_values;
+	for (idx_t i = 0; i < filters.size(); i++) {
+		auto &filter = filters[i];
+		if (filter->expression_class != ExpressionClass::BOUND_COMPARISON) {
+			continue;
+		}
+		auto &comp = filter->Cast<BoundComparisonExpression>();
+		if (comp.type != ExpressionType::COMPARE_EQUAL) {
+			continue;
+		}
+
+		BoundColumnRefExpression *col_ref = nullptr;
+		BoundConstantExpression *const_ref = nullptr;
+
+		if (comp.left->expression_class == ExpressionClass::BOUND_COLUMN_REF &&
+		    comp.right->expression_class == ExpressionClass::BOUND_CONSTANT) {
+			col_ref = &comp.left->Cast<BoundColumnRefExpression>();
+			const_ref = &comp.right->Cast<BoundConstantExpression>();
+		} else if (comp.right->expression_class == ExpressionClass::BOUND_COLUMN_REF &&
+		           comp.left->expression_class == ExpressionClass::BOUND_CONSTANT) {
+			col_ref = &comp.right->Cast<BoundColumnRefExpression>();
+			const_ref = &comp.left->Cast<BoundConstantExpression>();
+		}
+
+		if (!col_ref || !const_ref) {
+			continue;
+		}
+		if (col_ref->binding.table_index != get.table_index) {
+			continue;
+		}
+		if (const_ref->value.IsNull()) {
+			continue;
+		}
+
+		// Map from output position through column_ids to actual table column index
+		auto output_idx = col_ref->binding.column_index;
+		auto &col_ids = get.GetColumnIds();
+		if (output_idx >= col_ids.size()) {
+			continue;
+		}
+		auto table_col_idx = col_ids[output_idx].GetPrimaryIndex();
+		if (table_col_idx < get.names.size()) {
+			eq_values[get.names[table_col_idx]] = const_ref->value.ToString();
+		}
+	}
+
+	// Build prefix from consecutive identity column equality matches
+	std::vector<std::string> capture_values;
+	for (auto &cap_name : capture_names) {
+		auto it = eq_values.find(cap_name);
+		if (it == eq_values.end()) {
+			break;
+		}
+		capture_values.push_back(it->second);
+	}
+
+	if (!capture_values.empty()) {
+		scan_data.filter_prefix = parser.build_prefix(capture_values);
+	}
+}
+
 static unique_ptr<GlobalTableFunctionState> LevelPivotInitGlobal(ClientContext &context,
                                                                  TableFunctionInitInput &input) {
 	auto result = make_uniq<LevelPivotScanGlobalState>();
 	result->column_ids = input.column_ids;
+
+	// Copy filter prefix from bind_data (set by pushdown_complex_filter during optimization)
+	if (input.bind_data) {
+		auto &bind_data = input.bind_data->Cast<LevelPivotScanData>();
+		result->filter_prefix = bind_data.filter_prefix;
+	}
+
 	return std::move(result);
 }
 
@@ -82,7 +175,8 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 	auto &columns = table_entry.GetColumns();
 
 	if (!lstate.initialized) {
-		lstate.prefix = parser.build_prefix();
+		// Use filter-narrowed prefix if available, otherwise use the full table prefix
+		lstate.prefix = gstate.filter_prefix.empty() ? parser.build_prefix() : gstate.filter_prefix;
 		lstate.iterator = std::make_unique<level_pivot::LevelDBIterator>(connection.iterator());
 		if (lstate.prefix.empty()) {
 			lstate.iterator->seek_to_first();
@@ -101,13 +195,15 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 			std::string_view key_sv = lstate.iterator->key_view();
 
 			if (!IsWithinPrefix(key_sv, lstate.prefix)) {
-				// Past prefix - emit any accumulated row and stop
-				if (lstate.current_identity.has_value()) {
-					need_more_keys = false;
-					break;
+				// Past prefix - if we have accumulated identity, fall through to
+				// the post-loop emission code (need_more_keys stays true).
+				// If no identity, we're just done.
+				if (!lstate.current_identity.has_value()) {
+					gstate.done = true;
+					output.SetCardinality(count);
+					return;
 				}
-				gstate.done = true;
-				return;
+				break;
 			}
 
 			auto parsed = parser.parse_view(key_sv);
@@ -332,6 +428,8 @@ TableFunction LevelPivotScanFunction() {
 	func.init_global = LevelPivotInitGlobal;
 	func.init_local = LevelPivotInitLocal;
 	func.projection_pushdown = true;
+	func.filter_pushdown = false;
+	func.pushdown_complex_filter = LevelPivotPushdownComplexFilter;
 	return func;
 }
 
