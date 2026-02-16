@@ -162,7 +162,8 @@ void LevelPivotCatalog::CreateRawTable(const string &table_name, const vector<st
 		info->columns.AddColumn(ColumnDefinition(column_names[i], column_types[i]));
 	}
 
-	auto table_entry = make_uniq<LevelPivotTableEntry>(*this, *main_schema_, *info, connection_, vector<bool>(column_json));
+	auto table_entry =
+	    make_uniq<LevelPivotTableEntry>(*this, *main_schema_, *info, connection_, vector<bool>(column_json));
 	main_schema_->AddTable(std::move(table_entry));
 }
 

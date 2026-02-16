@@ -20,28 +20,24 @@ inline Value StringToTypedValue(std::string_view str_value, const LogicalType &t
 // JSON null → DuckDB NULL. JSON string → extracted string. JSON number → cast to target type.
 // Falls back to StringToTypedValue if JSON parse fails.
 inline Value JsonStringToTypedValue(std::string_view str_value, const LogicalType &type) {
-	using namespace duckdb_yyjson;
-
-	auto *doc = yyjson_read(str_value.data(), str_value.size(), 0);
+	auto *doc = duckdb_yyjson::yyjson_read(str_value.data(), str_value.size(), 0);
 	if (!doc) {
-		// Not valid JSON — fall back to bare string parsing
 		return StringToTypedValue(str_value, type);
 	}
 
-	auto *root = yyjson_doc_get_root(doc);
+	auto *root = duckdb_yyjson::yyjson_doc_get_root(doc);
 	Value result;
 
-	if (yyjson_is_null(root)) {
+	if (duckdb_yyjson::yyjson_is_null(root)) {
 		result = Value(type);
 	} else if (type.id() == LogicalTypeId::VARCHAR) {
-		if (yyjson_is_str(root)) {
-			auto *s = yyjson_get_str(root);
-			auto len = yyjson_get_len(root);
+		if (duckdb_yyjson::yyjson_is_str(root)) {
+			auto *s = duckdb_yyjson::yyjson_get_str(root);
+			auto len = duckdb_yyjson::yyjson_get_len(root);
 			result = Value(std::string(s, len));
 		} else {
-			// Array or object — serialize back to JSON string
 			size_t json_len = 0;
-			char *json_str = yyjson_val_write(root, 0, &json_len);
+			char *json_str = duckdb_yyjson::yyjson_val_write(root, 0, &json_len);
 			if (json_str) {
 				result = Value(std::string(json_str, json_len));
 				free(json_str);
@@ -49,44 +45,40 @@ inline Value JsonStringToTypedValue(std::string_view str_value, const LogicalTyp
 				result = Value(std::string(str_value));
 			}
 		}
-	} else if (yyjson_is_bool(root)) {
-		result = Value(std::string(yyjson_get_bool(root) ? "true" : "false")).DefaultCastAs(type);
-	} else if (yyjson_is_num(root)) {
-		if (yyjson_is_real(root)) {
-			result = Value(std::to_string(yyjson_get_real(root))).DefaultCastAs(type);
+	} else if (duckdb_yyjson::yyjson_is_bool(root)) {
+		result = Value(std::string(duckdb_yyjson::yyjson_get_bool(root) ? "true" : "false")).DefaultCastAs(type);
+	} else if (duckdb_yyjson::yyjson_is_num(root)) {
+		if (duckdb_yyjson::yyjson_is_real(root)) {
+			result = Value(std::to_string(duckdb_yyjson::yyjson_get_real(root))).DefaultCastAs(type);
 		} else {
-			result = Value(std::to_string(yyjson_get_sint(root))).DefaultCastAs(type);
+			result = Value(std::to_string(duckdb_yyjson::yyjson_get_sint(root))).DefaultCastAs(type);
 		}
 	} else {
-		// Unexpected JSON type — fall back to bare
-		yyjson_doc_free(doc);
+		duckdb_yyjson::yyjson_doc_free(doc);
 		return StringToTypedValue(str_value, type);
 	}
 
-	yyjson_doc_free(doc);
+	duckdb_yyjson::yyjson_doc_free(doc);
 	return result;
 }
 
 // Serialize a DuckDB Value into a JSON-encoded string for LevelDB storage.
 // VARCHAR values get JSON string quoting/escaping. Numeric/boolean types use ToString() (already valid JSON).
 inline std::string TypedValueToJsonString(const Value &val, const LogicalType &type) {
-	using namespace duckdb_yyjson;
-
 	if (type.id() == LogicalTypeId::VARCHAR) {
 		auto str = val.ToString();
-		auto *doc = yyjson_mut_doc_new(nullptr);
-		auto *root = yyjson_mut_strncpy(doc, str.data(), str.size());
-		yyjson_mut_doc_set_root(doc, root);
+		auto *doc = duckdb_yyjson::yyjson_mut_doc_new(nullptr);
+		auto *root = duckdb_yyjson::yyjson_mut_strncpy(doc, str.data(), str.size());
+		duckdb_yyjson::yyjson_mut_doc_set_root(doc, root);
 
 		size_t json_len = 0;
-		char *json_str = yyjson_mut_write(doc, 0, &json_len);
+		char *json_str = duckdb_yyjson::yyjson_mut_write(doc, 0, &json_len);
 		std::string result(json_str, json_len);
 		free(json_str);
-		yyjson_mut_doc_free(doc);
+		duckdb_yyjson::yyjson_mut_doc_free(doc);
 		return result;
 	}
 
-	// For numeric and boolean types, ToString() already produces valid JSON
 	return val.ToString();
 }
 
