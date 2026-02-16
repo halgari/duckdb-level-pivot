@@ -31,13 +31,7 @@ public:
 	bool IsSource() const override {
 		return true;
 	}
-	// DuckDB API compatibility: In v1.4.4, GetData is the virtual override point.
-	// In later versions, GetData became non-virtual and GetDataInternal is the
-	// protected virtual override point. We define both (without `override`) so the
-	// code compiles with either version. GetData forwards to GetDataInternal.
-	// NOLINTNEXTLINE(modernize-use-override, clang-diagnostic-inconsistent-missing-override)
-	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const;
-	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 };
 
 } // namespace duckdb

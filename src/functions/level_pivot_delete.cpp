@@ -78,14 +78,9 @@ SinkFinalizeType LevelPivotDelete::Finalize(Pipeline &pipeline, Event &event, Cl
 	return SinkFinalizeType::READY;
 }
 
-SourceResultType LevelPivotDelete::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-                                                   OperatorSourceInput &input) const {
-	return EmitRowCount(*sink_state, chunk);
-}
-
 SourceResultType LevelPivotDelete::GetData(ExecutionContext &context, DataChunk &chunk,
                                            OperatorSourceInput &input) const {
-	return GetDataInternal(context, chunk, input);
+	return EmitRowCount(*sink_state, chunk);
 }
 
 } // namespace duckdb
