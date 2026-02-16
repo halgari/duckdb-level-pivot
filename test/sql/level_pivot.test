@@ -551,6 +551,36 @@ DELETE FROM testdb.users WHERE "group" = 'dirty_test';
 statement ok
 CALL level_pivot_drop_table('testdb', 'kv2');
 
+# ===== Triple-hash delimiter tests =====
+
+# Create a pivot table with ### delimiters (mimics Vortex profile keys)
+statement ok
+CALL level_pivot_create_table('testdb', 'profiles', 'persistent###profiles###{profile_id}###{attr}', ['profile_id', 'name', 'gameId', 'lastActivated'], column_types := ['VARCHAR', 'JSON VARCHAR', 'JSON VARCHAR', 'JSON BIGINT']);
+
+# INSERT
+statement ok
+INSERT INTO testdb.profiles VALUES ('WZjnbJk46S', 'Default', 'fallout3', 1771275969527);
+
+statement ok
+INSERT INTO testdb.profiles VALUES ('jkArieENC', 'Default', 'skyrimse', 1771276257750);
+
+# SELECT all - verify ### delimiters work
+query IIII rowsort
+SELECT * FROM testdb.profiles;
+----
+WZjnbJk46S	Default	fallout3	1771275969527
+jkArieENC	Default	skyrimse	1771276257750
+
+# Filter on identity column
+query III
+SELECT name, gameId, lastActivated FROM testdb.profiles WHERE profile_id = 'jkArieENC';
+----
+Default	skyrimse	1771276257750
+
+# Clean up
+statement ok
+CALL level_pivot_drop_table('testdb', 'profiles');
+
 # Final DETACH
 statement ok
 DETACH testdb;

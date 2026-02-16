@@ -79,29 +79,19 @@ private:
 namespace detail {
 
 // Scalar implementation (always available)
-inline void find_delimiters_scalar(const char *data, size_t len, size_t start, char d0, char d1, size_t delim_len,
+inline void find_delimiters_scalar(const char *data, size_t len, size_t start, const char *delim, size_t delim_len,
                                    size_t *positions, size_t &count, size_t max_count) {
-	if (delim_len == 2) {
-		size_t i = start;
-		count = 0;
-		while (i + 1 < len && count < max_count) {
-			if (data[i] == d0 && data[i + 1] == d1) {
-				positions[count++] = i;
-				i += 2;
-			} else {
-				++i;
-			}
+	std::string_view key(data, len);
+	std::string_view delimiter(delim, delim_len);
+	size_t pos = start;
+	count = 0;
+	while (pos + delim_len <= len && count < max_count) {
+		pos = key.find(delimiter, pos);
+		if (pos == std::string_view::npos) {
+			break;
 		}
-	} else {
-		// General case - use string_view::find
-		std::string_view key(data, len);
-		std::string_view delim(&d0, delim_len);
-		size_t pos = start;
-		count = 0;
-		while ((pos = key.find(delim, pos)) != std::string_view::npos && count < max_count) {
-			positions[count++] = pos;
-			pos += delim_len;
-		}
+		positions[count++] = pos;
+		pos += delim_len;
 	}
 }
 
@@ -113,16 +103,12 @@ inline void find_delimiters_sse2(
 #else
 __attribute__((target("sse2"))) inline void find_delimiters_sse2(
 #endif
-    const char *data, size_t len, size_t start, char d0, char d1, size_t delim_len, size_t *positions, size_t &count,
+    const char *data, size_t len, size_t start, const char *delim, size_t delim_len, size_t *positions, size_t &count,
     size_t max_count) {
-	if (delim_len != 2) {
-		find_delimiters_scalar(data, len, start, d0, d1, delim_len, positions, count, max_count);
-		return;
-	}
-
-	__m128i vd0 = _mm_set1_epi8(d0);
+	__m128i vd0 = _mm_set1_epi8(delim[0]);
 	size_t i = start;
 	count = 0;
+	size_t min_next_pos = start;
 
 	while (i + 16 <= len && count < max_count) {
 		__m128i chunk = _mm_loadu_si128(reinterpret_cast<const __m128i *>(data + i));
@@ -138,8 +124,10 @@ __attribute__((target("sse2"))) inline void find_delimiters_sse2(
 #endif
 			size_t pos = i + bit_pos;
 
-			if (pos + 1 < len && data[pos + 1] == d1) {
+			if (pos >= min_next_pos && pos + delim_len <= len &&
+			    memcmp(data + pos, delim, delim_len) == 0) {
 				positions[count++] = pos;
+				min_next_pos = pos + delim_len;
 			}
 			mask0 &= mask0 - 1;
 		}
@@ -147,11 +135,15 @@ __attribute__((target("sse2"))) inline void find_delimiters_sse2(
 	}
 
 	// Handle tail
-	while (i + 1 < len && count < max_count) {
-		if (data[i] == d0 && data[i + 1] == d1) {
+	while (i + delim_len <= len && count < max_count) {
+		if (i >= min_next_pos && data[i] == delim[0] &&
+		    memcmp(data + i, delim, delim_len) == 0) {
 			positions[count++] = i;
+			min_next_pos = i + delim_len;
+			i += delim_len;
+		} else {
+			++i;
 		}
-		++i;
 	}
 }
 
@@ -161,16 +153,12 @@ inline void find_delimiters_avx2(
 #else
 __attribute__((target("avx2"))) inline void find_delimiters_avx2(
 #endif
-    const char *data, size_t len, size_t start, char d0, char d1, size_t delim_len, size_t *positions, size_t &count,
+    const char *data, size_t len, size_t start, const char *delim, size_t delim_len, size_t *positions, size_t &count,
     size_t max_count) {
-	if (delim_len != 2) {
-		find_delimiters_scalar(data, len, start, d0, d1, delim_len, positions, count, max_count);
-		return;
-	}
-
-	__m256i vd0 = _mm256_set1_epi8(d0);
+	__m256i vd0 = _mm256_set1_epi8(delim[0]);
 	size_t i = start;
 	count = 0;
+	size_t min_next_pos = start;
 
 	while (i + 32 <= len && count < max_count) {
 		__m256i chunk = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(data + i));
@@ -186,8 +174,10 @@ __attribute__((target("avx2"))) inline void find_delimiters_avx2(
 #endif
 			size_t pos = i + bit_pos;
 
-			if (pos + 1 < len && data[pos + 1] == d1) {
+			if (pos >= min_next_pos && pos + delim_len <= len &&
+			    memcmp(data + pos, delim, delim_len) == 0) {
 				positions[count++] = pos;
+				min_next_pos = pos + delim_len;
 			}
 			mask0 &= mask0 - 1;
 		}
@@ -195,11 +185,15 @@ __attribute__((target("avx2"))) inline void find_delimiters_avx2(
 	}
 
 	// Handle tail with scalar
-	while (i + 1 < len && count < max_count) {
-		if (data[i] == d0 && data[i + 1] == d1) {
+	while (i + delim_len <= len && count < max_count) {
+		if (i >= min_next_pos && data[i] == delim[0] &&
+		    memcmp(data + i, delim, delim_len) == 0) {
 			positions[count++] = i;
+			min_next_pos = i + delim_len;
+			i += delim_len;
+		} else {
+			++i;
 		}
-		++i;
 	}
 }
 
@@ -226,16 +220,12 @@ static inline uint16_t neon_movemask_u8(uint8x16_t v) {
 }
 
 // NEON implementation (16 bytes per iteration, same throughput as SSE2)
-inline void find_delimiters_neon(const char *data, size_t len, size_t start, char d0, char d1, size_t delim_len,
+inline void find_delimiters_neon(const char *data, size_t len, size_t start, const char *delim, size_t delim_len,
                                  size_t *positions, size_t &count, size_t max_count) {
-	if (delim_len != 2) {
-		find_delimiters_scalar(data, len, start, d0, d1, delim_len, positions, count, max_count);
-		return;
-	}
-
-	uint8x16_t vd0 = vdupq_n_u8(static_cast<uint8_t>(d0));
+	uint8x16_t vd0 = vdupq_n_u8(static_cast<uint8_t>(delim[0]));
 	size_t i = start;
 	count = 0;
+	size_t min_next_pos = start;
 
 	while (i + 16 <= len && count < max_count) {
 		uint8x16_t chunk = vld1q_u8(reinterpret_cast<const uint8_t *>(data + i));
@@ -246,8 +236,10 @@ inline void find_delimiters_neon(const char *data, size_t len, size_t start, cha
 			uint32_t bit_pos = static_cast<uint32_t>(__builtin_ctz(mask0));
 			size_t pos = i + bit_pos;
 
-			if (pos + 1 < len && data[pos + 1] == d1) {
+			if (pos >= min_next_pos && pos + delim_len <= len &&
+			    memcmp(data + pos, delim, delim_len) == 0) {
 				positions[count++] = pos;
+				min_next_pos = pos + delim_len;
 			}
 			mask0 &= mask0 - 1;
 		}
@@ -255,18 +247,22 @@ inline void find_delimiters_neon(const char *data, size_t len, size_t start, cha
 	}
 
 	// Handle tail
-	while (i + 1 < len && count < max_count) {
-		if (data[i] == d0 && data[i + 1] == d1) {
+	while (i + delim_len <= len && count < max_count) {
+		if (i >= min_next_pos && data[i] == delim[0] &&
+		    memcmp(data + i, delim, delim_len) == 0) {
 			positions[count++] = i;
+			min_next_pos = i + delim_len;
+			i += delim_len;
+		} else {
+			++i;
 		}
-		++i;
 	}
 }
 
 #endif // LEVEL_PIVOT_AARCH64
 
 // Function pointer type for delimiter finding
-using FindDelimitersFn = void (*)(const char *data, size_t len, size_t start, char d0, char d1, size_t delim_len,
+using FindDelimitersFn = void (*)(const char *data, size_t len, size_t start, const char *delim, size_t delim_len,
                                   size_t *positions, size_t &count, size_t max_count);
 
 // Runtime dispatcher - selects best implementation once
@@ -342,9 +338,9 @@ public:
 		size_t delim_stack[MAX_KEY_CAPTURES + 1];
 		size_t delim_count = 0;
 
-		find_delimiters_(key.data(), key.size(), search_start, delimiter_[0],
-		                 delimiter_.size() > 1 ? delimiter_[1] : '\0', delimiter_.size(), delim_stack, delim_count,
-		                 num_delimiters_ + 1);
+		find_delimiters_(key.data(), key.size(), search_start,
+		                 delimiter_.data(), delimiter_.size(),
+		                 delim_stack, delim_count, num_delimiters_ + 1);
 
 		if (delim_count != num_delimiters_) {
 			return false;
