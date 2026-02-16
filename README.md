@@ -129,6 +129,53 @@ SELECT SUM(mem_mb), MAX(cpu_pct) FROM db.metrics;
 
 Omitting `column_types` defaults everything to VARCHAR for backward compatibility.
 
+## JSON-Encoded Values
+
+LevelDB databases sometimes store values as JSON — e.g. `"Alice"` instead of `Alice`, or `[1,2,3]` instead of a bare string. The `JSON` prefix tells LevelPivot to unwrap JSON on reads and re-encode on writes:
+
+```sql
+CALL level_pivot_create_table('db', 'tbl', 'tbl##{id}##{attr}',
+  ['id', 'name', 'score'],
+  column_types := ['VARCHAR', 'JSON VARCHAR', 'JSON BIGINT']);
+```
+
+- `name` is stored as a JSON string in LevelDB (`"Alice"`) — reads as `Alice`
+- `score` is stored as a JSON number (`42`) — reads as `42` (same as bare for numbers)
+- `id` is a bare identity column — no JSON encoding
+
+### Syntax
+
+Prefix any type string with `JSON ` (case-insensitive):
+
+```sql
+column_types := ['VARCHAR', 'JSON VARCHAR', 'JSON BIGINT', 'JSON DOUBLE']
+```
+
+### Round-trip behavior
+
+| DuckDB value | Column type   | LevelDB bytes    | Read back    |
+|---|---|---|---|
+| `Alice`      | JSON VARCHAR  | `"Alice"`        | `Alice`      |
+| `Bob "B"`    | JSON VARCHAR  | `"Bob \"B\""`    | `Bob "B"`    |
+| `42`         | JSON BIGINT   | `42`             | `42`         |
+| NULL         | any           | (no key written) | NULL         |
+| `Alice`      | VARCHAR       | `Alice`          | `Alice`      |
+
+JSON `null` values in LevelDB are read as DuckDB NULL.
+
+### Restrictions
+
+Identity columns (captures in the key pattern) **cannot** be JSON — they are used to construct LevelDB keys and must be bare strings. Attempting to use `JSON` on an identity column produces an error:
+
+```sql
+-- This will error:
+CALL level_pivot_create_table('db', 'bad', 'bad##{id}##{attr}',
+  ['id', 'val'], column_types := ['JSON VARCHAR', 'VARCHAR']);
+-- Error: Identity column 'id' cannot be JSON-encoded
+```
+
+Similarly, the key column of a raw table cannot be JSON.
+
 ## Filter Pushdown
 
 Equality filters on consecutive identity columns (in pattern order) are converted to LevelDB prefix seeks:

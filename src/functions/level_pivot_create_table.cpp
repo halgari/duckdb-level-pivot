@@ -3,6 +3,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/types.hpp"
+#include <algorithm>
 
 namespace duckdb {
 
@@ -12,6 +13,7 @@ struct CreateTableBindData : public TableFunctionData {
 	string pattern;
 	vector<string> column_names;
 	vector<LogicalType> column_types;
+	vector<bool> column_json;
 	string table_mode; // "pivot" or "raw"
 	bool done = false;
 };
@@ -46,11 +48,24 @@ static unique_ptr<FunctionData> CreateTableBind(ClientContext &context, TableFun
 			                            type_list.size(), data->column_names.size());
 		}
 		for (auto &type_val : type_list) {
-			data->column_types.push_back(TransformStringToLogicalType(type_val.GetValue<string>()));
+			auto type_str = type_val.GetValue<string>();
+			// Check for case-insensitive "JSON " prefix
+			bool is_json = false;
+			if (type_str.size() >= 5) {
+				auto prefix = type_str.substr(0, 5);
+				std::transform(prefix.begin(), prefix.end(), prefix.begin(), ::toupper);
+				if (prefix == "JSON ") {
+					is_json = true;
+					type_str = type_str.substr(5);
+				}
+			}
+			data->column_json.push_back(is_json);
+			data->column_types.push_back(TransformStringToLogicalType(type_str));
 		}
 	} else {
-		// Default: all VARCHAR
+		// Default: all VARCHAR, no JSON
 		data->column_types.resize(data->column_names.size(), LogicalType::VARCHAR);
+		data->column_json.resize(data->column_names.size(), false);
 	}
 
 	// Check for table_mode named parameter
@@ -83,13 +98,14 @@ static void CreateTableFunc(ClientContext &context, TableFunctionInput &data, Da
 	auto &lp_catalog = catalog.Cast<LevelPivotCatalog>();
 
 	if (bind_data.table_mode == "raw") {
-		lp_catalog.CreateRawTable(bind_data.table_name, bind_data.column_names, bind_data.column_types);
+		lp_catalog.CreateRawTable(bind_data.table_name, bind_data.column_names, bind_data.column_types,
+		                          bind_data.column_json);
 	} else {
 		if (bind_data.pattern.empty()) {
 			throw InvalidInputException("Pattern is required for pivot tables");
 		}
 		lp_catalog.CreatePivotTable(bind_data.table_name, bind_data.pattern, bind_data.column_names,
-		                            bind_data.column_types);
+		                            bind_data.column_types, bind_data.column_json);
 	}
 
 	output.SetCardinality(1);

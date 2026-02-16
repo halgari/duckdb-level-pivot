@@ -11,6 +11,7 @@ project(${TARGET_NAME})
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include_directories(src/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/duckdb/third_party/yyjson/include)
 
 set(EXTENSION_SOURCES
     src/level_pivot_extension.cpp

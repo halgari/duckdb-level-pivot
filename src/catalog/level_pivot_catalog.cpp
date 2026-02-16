@@ -103,7 +103,8 @@ string LevelPivotCatalog::GetDBPath() {
 }
 
 void LevelPivotCatalog::CreatePivotTable(const string &table_name, const string &pattern,
-                                         const vector<string> &column_names, const vector<LogicalType> &column_types) {
+                                         const vector<string> &column_names, const vector<LogicalType> &column_types,
+                                         const vector<bool> &column_json) {
 	// Parse the key pattern
 	auto key_pattern = std::make_unique<level_pivot::KeyPattern>(pattern);
 	auto key_parser = std::make_unique<level_pivot::KeyParser>(*key_pattern);
@@ -113,7 +114,8 @@ void LevelPivotCatalog::CreatePivotTable(const string &table_name, const string 
 	vector<string> attr_columns;
 	auto &capture_names = key_pattern->capture_names();
 
-	for (auto &col_name : column_names) {
+	for (idx_t i = 0; i < column_names.size(); i++) {
+		auto &col_name = column_names[i];
 		bool is_identity = false;
 		for (auto &cap : capture_names) {
 			if (col_name == cap) {
@@ -122,6 +124,9 @@ void LevelPivotCatalog::CreatePivotTable(const string &table_name, const string 
 			}
 		}
 		if (is_identity) {
+			if (column_json[i]) {
+				throw InvalidInputException("Identity column '%s' cannot be JSON-encoded", col_name);
+			}
 			identity_columns.push_back(col_name);
 		} else {
 			attr_columns.push_back(col_name);
@@ -137,14 +142,17 @@ void LevelPivotCatalog::CreatePivotTable(const string &table_name, const string 
 	}
 
 	auto table_entry = make_uniq<LevelPivotTableEntry>(*this, *main_schema_, *info, connection_, std::move(key_parser),
-	                                                   identity_columns, attr_columns);
+	                                                   identity_columns, attr_columns, vector<bool>(column_json));
 	main_schema_->AddTable(std::move(table_entry));
 }
 
 void LevelPivotCatalog::CreateRawTable(const string &table_name, const vector<string> &column_names,
-                                       const vector<LogicalType> &column_types) {
+                                       const vector<LogicalType> &column_types, const vector<bool> &column_json) {
 	if (column_names.size() != 2) {
 		throw InvalidInputException("Raw tables must have exactly 2 columns (key, value)");
+	}
+	if (column_json[0]) {
+		throw InvalidInputException("Key column cannot be JSON-encoded");
 	}
 
 	auto info = make_uniq<CreateTableInfo>();
@@ -154,7 +162,7 @@ void LevelPivotCatalog::CreateRawTable(const string &table_name, const vector<st
 		info->columns.AddColumn(ColumnDefinition(column_names[i], column_types[i]));
 	}
 
-	auto table_entry = make_uniq<LevelPivotTableEntry>(*this, *main_schema_, *info, connection_);
+	auto table_entry = make_uniq<LevelPivotTableEntry>(*this, *main_schema_, *info, connection_, vector<bool>(column_json));
 	main_schema_->AddTable(std::move(table_entry));
 }
 

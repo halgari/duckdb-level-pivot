@@ -10,17 +10,20 @@ namespace duckdb {
 LevelPivotTableEntry::LevelPivotTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
                                            std::shared_ptr<level_pivot::LevelDBConnection> connection,
                                            std::unique_ptr<level_pivot::KeyParser> parser,
-                                           vector<string> identity_columns, vector<string> attr_columns)
+                                           vector<string> identity_columns, vector<string> attr_columns,
+                                           vector<bool> column_json)
     : TableCatalogEntry(catalog, schema, info), mode_(LevelPivotTableMode::PIVOT), connection_(std::move(connection)),
       parser_(std::move(parser)), identity_columns_(std::move(identity_columns)),
-      attr_columns_(std::move(attr_columns)) {
+      attr_columns_(std::move(attr_columns)), column_json_(std::move(column_json)) {
 	BuildColumnIndexCache();
 }
 
 // Raw mode constructor
 LevelPivotTableEntry::LevelPivotTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
-                                           std::shared_ptr<level_pivot::LevelDBConnection> connection)
-    : TableCatalogEntry(catalog, schema, info), mode_(LevelPivotTableMode::RAW), connection_(std::move(connection)) {
+                                           std::shared_ptr<level_pivot::LevelDBConnection> connection,
+                                           vector<bool> column_json)
+    : TableCatalogEntry(catalog, schema, info), mode_(LevelPivotTableMode::RAW), connection_(std::move(connection)),
+      column_json_(std::move(column_json)) {
 	// For raw mode: column 0 = key, column 1 = value
 	if (info.columns.LogicalColumnCount() >= 1) {
 		identity_columns_.push_back(info.columns.GetColumn(LogicalIndex(0)).Name());

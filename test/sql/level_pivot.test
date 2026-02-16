@@ -361,6 +361,91 @@ CALL level_pivot_drop_table('testdb', 'flags');
 statement ok
 CALL level_pivot_drop_table('testdb', 'compat');
 
+# ===== JSON-encoded column tests =====
+
+# Create a pivot table with JSON VARCHAR and JSON BIGINT columns
+statement ok
+CALL level_pivot_create_table('testdb', 'json_tbl', 'json_tbl##{id}##{attr}', ['id', 'name', 'score'], column_types := ['VARCHAR', 'JSON VARCHAR', 'JSON BIGINT']);
+
+# INSERT values
+statement ok
+INSERT INTO testdb.json_tbl VALUES ('u1', 'Alice', 42);
+
+statement ok
+INSERT INTO testdb.json_tbl VALUES ('u2', 'Bob "B"', 99);
+
+# SELECT and verify clean unquoted values come back
+query III rowsort
+SELECT * FROM testdb.json_tbl;
+----
+u1	Alice	42
+u2	Bob "B"	99
+
+# Verify raw LevelDB contains JSON-encoded values
+statement ok
+CALL level_pivot_create_table('testdb', 'raw_check', NULL, ['key', 'value'], table_mode := 'raw');
+
+# Check that the name for u1 is stored as a JSON string with quotes
+query I
+SELECT value FROM testdb.raw_check WHERE key = 'json_tbl##u1##name';
+----
+"Alice"
+
+# Check that the score for u1 is stored as a JSON number
+query I
+SELECT value FROM testdb.raw_check WHERE key = 'json_tbl##u1##score';
+----
+42
+
+# Check that the name for u2 is stored with escaped quotes
+query I
+SELECT value FROM testdb.raw_check WHERE key = 'json_tbl##u2##name';
+----
+"Bob \"B\""
+
+# UPDATE round-trip test
+statement ok
+UPDATE testdb.json_tbl SET name = 'Charlie "C"' WHERE id = 'u1';
+
+query II
+SELECT name, score FROM testdb.json_tbl WHERE id = 'u1';
+----
+Charlie "C"	42
+
+# Verify the raw value was updated with JSON encoding
+query I
+SELECT value FROM testdb.raw_check WHERE key = 'json_tbl##u1##name';
+----
+"Charlie \"C\""
+
+# Test with partial NULL (one attr set, one NULL)
+statement ok
+INSERT INTO testdb.json_tbl VALUES ('u3', 'Charlie', NULL);
+
+query III
+SELECT * FROM testdb.json_tbl WHERE id = 'u3';
+----
+u3	Charlie	NULL
+
+# Error: identity column with JSON prefix should fail
+statement error
+CALL level_pivot_create_table('testdb', 'bad_json', 'bad##{id}##{attr}', ['id', 'val'], column_types := ['JSON VARCHAR', 'VARCHAR']);
+----
+Identity column 'id' cannot be JSON-encoded
+
+# Error: raw table key column with JSON prefix should fail
+statement error
+CALL level_pivot_create_table('testdb', 'bad_json_raw', NULL, ['key', 'value'], table_mode := 'raw', column_types := ['JSON VARCHAR', 'VARCHAR']);
+----
+Key column cannot be JSON-encoded
+
+# Clean up JSON tables
+statement ok
+CALL level_pivot_drop_table('testdb', 'raw_check');
+
+statement ok
+CALL level_pivot_drop_table('testdb', 'json_tbl');
+
 # ===== Dirty table tracking tests =====
 
 # Create a raw table for dirty tracking tests

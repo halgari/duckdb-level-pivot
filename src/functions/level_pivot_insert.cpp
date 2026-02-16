@@ -1,5 +1,6 @@
 #include "level_pivot_insert.hpp"
 #include "level_pivot_sink_helpers.hpp"
+#include "level_pivot_utils.hpp"
 #include "key_parser.hpp"
 
 namespace duckdb {
@@ -45,7 +46,12 @@ SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chun
 				auto val = chunk.data[col_idx].GetValue(row);
 				if (!val.IsNull()) {
 					std::string key = parser.build(identity_values, attr_name);
-					batch.put(key, val.ToString());
+					if (ctx.table.IsJsonColumn(col_idx)) {
+						auto &col_type = ctx.table.GetColumns().GetColumn(LogicalIndex(col_idx)).Type();
+						batch.put(key, TypedValueToJsonString(val, col_type));
+					} else {
+						batch.put(key, val.ToString());
+					}
 					ctx.txn.CheckKeyAgainstTables(key, ctx.schema);
 				}
 			}
@@ -55,6 +61,8 @@ SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chun
 		gstate.row_count += chunk.size();
 	} else {
 		// Raw mode: column 0 = key, column 1 = value
+		bool val_is_json = ctx.table.IsJsonColumn(1);
+		auto &val_col_type = ctx.table.GetColumns().GetColumn(LogicalIndex(1)).Type();
 		auto batch = ctx.connection.create_batch();
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			auto key_val = chunk.data[0].GetValue(row);
@@ -63,7 +71,13 @@ SinkResultType LevelPivotInsert::Sink(ExecutionContext &context, DataChunk &chun
 				throw InvalidInputException("Cannot insert NULL key in raw mode");
 			}
 			std::string key = key_val.ToString();
-			batch.put(key, val_val.IsNull() ? "" : val_val.ToString());
+			if (val_val.IsNull()) {
+				batch.put(key, "");
+			} else if (val_is_json) {
+				batch.put(key, TypedValueToJsonString(val_val, val_col_type));
+			} else {
+				batch.put(key, val_val.ToString());
+			}
 			ctx.txn.CheckKeyAgainstTables(key, ctx.schema);
 		}
 		batch.commit();

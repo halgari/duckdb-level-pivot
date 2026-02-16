@@ -49,9 +49,9 @@ public:
 
 	// Table management (called by level_pivot_create_table function)
 	void CreatePivotTable(const string &table_name, const string &pattern, const vector<string> &column_names,
-	                      const vector<LogicalType> &column_types);
+	                      const vector<LogicalType> &column_types, const vector<bool> &column_json);
 	void CreateRawTable(const string &table_name, const vector<string> &column_names,
-	                    const vector<LogicalType> &column_types);
+	                    const vector<LogicalType> &column_types, const vector<bool> &column_json);
 	void DropTable(const string &table_name);
 
 private:

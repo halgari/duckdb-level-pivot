@@ -20,6 +20,7 @@ struct AttrMapping {
 	std::string_view name;
 	idx_t output_col;
 	LogicalType type;
+	bool is_json;
 };
 
 // Mapping from capture index to output column index
@@ -163,7 +164,20 @@ static inline void WriteStringDirect(Vector &vec, idx_t row, std::string_view sv
 	FlatVector::GetData<string_t>(vec)[row] = StringVector::AddString(vec, sv.data(), sv.size());
 }
 
-static inline void WriteValueDirect(Vector &vec, idx_t row, std::string_view sv, const LogicalType &type) {
+static inline void WriteValueDirect(Vector &vec, idx_t row, std::string_view sv, const LogicalType &type,
+                                    bool is_json = false) {
+	if (is_json) {
+		auto val = JsonStringToTypedValue(sv, type);
+		if (val.IsNull()) {
+			FlatVector::SetNull(vec, row, true);
+		} else if (type.id() == LogicalTypeId::VARCHAR) {
+			auto str = val.ToString();
+			WriteStringDirect(vec, row, str);
+		} else {
+			vec.SetValue(row, val);
+		}
+		return;
+	}
 	if (type.id() == LogicalTypeId::VARCHAR) {
 		WriteStringDirect(vec, row, sv);
 	} else {
@@ -221,6 +235,7 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 				am.name = col_name;
 				am.output_col = i;
 				am.type = col.Type();
+				am.is_json = table_entry.IsJsonColumn(col_idx);
 				lstate.attr_mappings.push_back(std::move(am));
 			}
 		}
@@ -312,7 +327,8 @@ static void PivotScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalStat
 		for (size_t a = 0; a < num_attrs; ++a) {
 			if (attr_mappings[a].name == lstate.attr_sv) {
 				std::string_view val_sv = lstate.iterator->value_view();
-				WriteValueDirect(output.data[attr_mappings[a].output_col], count, val_sv, attr_mappings[a].type);
+				WriteValueDirect(output.data[attr_mappings[a].output_col], count, val_sv, attr_mappings[a].type,
+				                 attr_mappings[a].is_json);
 				lstate.attr_written[a] = true;
 				break;
 			}
@@ -362,10 +378,11 @@ static void RawScan(LevelPivotTableEntry &table_entry, LevelPivotScanLocalState 
 				continue;
 			}
 			auto &col_type = columns.GetColumn(LogicalIndex(col_idx)).Type();
+			bool is_json = table_entry.IsJsonColumn(col_idx);
 			if (col_idx == 0) {
 				WriteValueDirect(output.data[i], count, key_sv, col_type);
 			} else if (col_idx == 1) {
-				WriteValueDirect(output.data[i], count, val_sv, col_type);
+				WriteValueDirect(output.data[i], count, val_sv, col_type, is_json);
 			}
 		}
 		count++;

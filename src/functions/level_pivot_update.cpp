@@ -67,7 +67,12 @@ SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chun
 				if (new_val.IsNull()) {
 					batch.del(key);
 				} else {
-					batch.put(key, new_val.ToString());
+					auto table_col_idx = ctx.table.GetColumnIndex(col_name);
+					if (ctx.table.IsJsonColumn(table_col_idx)) {
+						batch.put(key, TypedValueToJsonString(new_val, col.Type()));
+					} else {
+						batch.put(key, new_val.ToString());
+					}
 				}
 				ctx.txn.CheckKeyAgainstTables(key, ctx.schema);
 			}
@@ -77,6 +82,8 @@ SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chun
 		gstate.row_count += chunk.size();
 	} else {
 		// Raw mode: chunk layout is [update_value, row_id_key]
+		bool val_is_json = ctx.table.IsJsonColumn(1);
+		auto &val_col_type = ctx.table.GetColumns().GetColumn(LogicalIndex(1)).Type();
 		auto batch = ctx.connection.create_batch();
 		idx_t key_col_idx = chunk.ColumnCount() - 1;
 		for (idx_t row = 0; row < chunk.size(); row++) {
@@ -86,7 +93,13 @@ SinkResultType LevelPivotUpdate::Sink(ExecutionContext &context, DataChunk &chun
 			}
 			auto val = chunk.data[0].GetValue(row);
 			std::string key = key_val.ToString();
-			batch.put(key, val.IsNull() ? "" : val.ToString());
+			if (val.IsNull()) {
+				batch.put(key, "");
+			} else if (val_is_json) {
+				batch.put(key, TypedValueToJsonString(val, val_col_type));
+			} else {
+				batch.put(key, val.ToString());
+			}
 			ctx.txn.CheckKeyAgainstTables(key, ctx.schema);
 		}
 		batch.commit();
