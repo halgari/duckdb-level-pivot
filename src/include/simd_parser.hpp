@@ -124,8 +124,7 @@ __attribute__((target("sse2"))) inline void find_delimiters_sse2(
 #endif
 			size_t pos = i + bit_pos;
 
-			if (pos >= min_next_pos && pos + delim_len <= len &&
-			    memcmp(data + pos, delim, delim_len) == 0) {
+			if (pos >= min_next_pos && pos + delim_len <= len && memcmp(data + pos, delim, delim_len) == 0) {
 				positions[count++] = pos;
 				min_next_pos = pos + delim_len;
 			}
@@ -136,8 +135,7 @@ __attribute__((target("sse2"))) inline void find_delimiters_sse2(
 
 	// Handle tail
 	while (i + delim_len <= len && count < max_count) {
-		if (i >= min_next_pos && data[i] == delim[0] &&
-		    memcmp(data + i, delim, delim_len) == 0) {
+		if (i >= min_next_pos && data[i] == delim[0] && memcmp(data + i, delim, delim_len) == 0) {
 			positions[count++] = i;
 			min_next_pos = i + delim_len;
 			i += delim_len;
@@ -174,8 +172,7 @@ __attribute__((target("avx2"))) inline void find_delimiters_avx2(
 #endif
 			size_t pos = i + bit_pos;
 
-			if (pos >= min_next_pos && pos + delim_len <= len &&
-			    memcmp(data + pos, delim, delim_len) == 0) {
+			if (pos >= min_next_pos && pos + delim_len <= len && memcmp(data + pos, delim, delim_len) == 0) {
 				positions[count++] = pos;
 				min_next_pos = pos + delim_len;
 			}
@@ -186,8 +183,7 @@ __attribute__((target("avx2"))) inline void find_delimiters_avx2(
 
 	// Handle tail with scalar
 	while (i + delim_len <= len && count < max_count) {
-		if (i >= min_next_pos && data[i] == delim[0] &&
-		    memcmp(data + i, delim, delim_len) == 0) {
+		if (i >= min_next_pos && data[i] == delim[0] && memcmp(data + i, delim, delim_len) == 0) {
 			positions[count++] = i;
 			min_next_pos = i + delim_len;
 			i += delim_len;
@@ -236,8 +232,7 @@ inline void find_delimiters_neon(const char *data, size_t len, size_t start, con
 			uint32_t bit_pos = static_cast<uint32_t>(__builtin_ctz(mask0));
 			size_t pos = i + bit_pos;
 
-			if (pos >= min_next_pos && pos + delim_len <= len &&
-			    memcmp(data + pos, delim, delim_len) == 0) {
+			if (pos >= min_next_pos && pos + delim_len <= len && memcmp(data + pos, delim, delim_len) == 0) {
 				positions[count++] = pos;
 				min_next_pos = pos + delim_len;
 			}
@@ -248,8 +243,7 @@ inline void find_delimiters_neon(const char *data, size_t len, size_t start, con
 
 	// Handle tail
 	while (i + delim_len <= len && count < max_count) {
-		if (i >= min_next_pos && data[i] == delim[0] &&
-		    memcmp(data + i, delim, delim_len) == 0) {
+		if (i >= min_next_pos && data[i] == delim[0] && memcmp(data + i, delim, delim_len) == 0) {
 			positions[count++] = i;
 			min_next_pos = i + delim_len;
 			i += delim_len;
@@ -338,9 +332,8 @@ public:
 		size_t delim_stack[MAX_KEY_CAPTURES + 1];
 		size_t delim_count = 0;
 
-		find_delimiters_(key.data(), key.size(), search_start,
-		                 delimiter_.data(), delimiter_.size(),
-		                 delim_stack, delim_count, num_delimiters_ + 1);
+		find_delimiters_(key.data(), key.size(), search_start, delimiter_.data(), delimiter_.size(), delim_stack,
+		                 delim_count, num_delimiters_ + 1);
 
 		if (delim_count != num_delimiters_) {
 			return false;
